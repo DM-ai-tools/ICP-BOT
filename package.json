@@ -10,7 +10,7 @@
     "build": "prisma generate && next build && node scripts/postbuild.mjs",
     "start": "node .next/standalone/server.js",
     "start:next": "next start -H 0.0.0.0 -p ${PORT:-3000}",
-    "release": "prisma migrate deploy",
+    "release": "node scripts/release.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "selftest": "tsx --conditions=react-server scripts/selftest.mts",
