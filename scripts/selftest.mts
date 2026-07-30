@@ -20,12 +20,15 @@ import { buildAwarenessMapDocx, buildSingleDocx, coverInfoFrom, exportFilename }
 import { buildPdf } from '../src/lib/pdf';
 import { comparisonToMarkdown, type ComparisonRow } from '../src/lib/comparison';
 import { scenariosFromModal, AWARENESS } from '../src/lib/awareness';
+import { buildResolverUserMessage } from '../src/lib/resolve';
 import {
   ASKABLE_SLOTS,
   PRICE_NOT_SPECIFIED,
   applyDocumentedDefaults,
   applyFallbacks,
   computeReadiness,
+  MAX_ASKS_PER_SLOT,
+  trackAsk,
   detectRegulated,
   mergeResolution,
   normaliseServices,
@@ -244,6 +247,68 @@ check(
     applyFallbacks({ ...nearlyDone, maturity_tier: 'advanced' }, {}, ['maturity_tier']).slots
       .maturity_tier === 'advanced',
 );
+
+// ---------------------------------------------------------------------------
+// The repeated-question bug.
+//
+// Observed in the wild: the bot asked "are these established homeowners who've
+// dealt with plumbing issues before?" three times in a row, including twice
+// AFTER the user answered it directly. The deflection regex never fired because
+// the user was not deflecting — they were answering, and the resolver simply
+// failed to map their words onto maturity_tier. Nothing counted the asks, so it
+// looped. These checks make that impossible by construction.
+// ---------------------------------------------------------------------------
+
+const noMaturityBrief: SlotValues = { ...nearlyDone, maturity_tier: null };
+
+// Turn 1: asked, not answered. One retry is allowed.
+const strike1 = trackAsk({ lastAskedSlot: 'maturity_tier', lastAskedCount: 0 }, noMaturityBrief);
+check('an unanswered question earns one retry', strike1.freeze.length === 0 && strike1.strikes === 1);
+check('the retry is flagged so it is asked differently', strike1.isRetry);
+
+// Turn 2: asked again, still not resolved. Now it is frozen for good.
+const strike2 = trackAsk({ lastAskedSlot: 'maturity_tier', lastAskedCount: 1 }, noMaturityBrief);
+check('a second failure freezes the slot permanently', strike2.freeze.includes('maturity_tier'));
+check('a frozen slot is not also flagged as a retry', !strike2.isRetry);
+check(
+  'the frozen slot can never be queued again',
+  computeReadiness(noMaturityBrief, {}, { askedAndDeflected: strike2.freeze }).nextAsk !==
+    'maturity_tier',
+);
+check(
+  'and it lands on a flagged assumption instead of blocking',
+  applyFallbacks(noMaturityBrief, {}, strike2.freeze).slots.maturity_tier === 'intermediate',
+);
+
+// The counter must reset the moment an answer lands, or unrelated later
+// questions inherit strikes they did not earn.
+const landed = trackAsk({ lastAskedSlot: 'maturity_tier', lastAskedCount: 1 }, nearlyDone);
+check('a landed answer clears the counter', landed.strikes === 0 && landed.freeze.length === 0);
+
+// An explicit "I don't know" skips the retry and freezes immediately.
+const dodged = trackAsk({ lastAskedSlot: 'maturity_tier', lastAskedCount: 0 }, noMaturityBrief, {
+  deflected: true,
+});
+check('an explicit deflection freezes on the first strike', dodged.freeze.includes('maturity_tier'));
+
+check('no slot is ever asked more than twice', MAX_ASKS_PER_SLOT === 2);
+check(
+  'nothing to track when no question was asked',
+  trackAsk({ lastAskedSlot: null, lastAskedCount: 0 }, {}).freeze.length === 0,
+);
+
+// The resolver must be told which slot the last question targeted — without it,
+// "established homeowners who've dealt with this before" is ambiguous prose.
+const withHint = buildResolverUserMessage({
+  runId: 't', history: [{ role: 'user', content: 'established homeowners' }],
+  currentSlots: {}, lastAskedSlot: 'maturity_tier',
+});
+const withoutHint = buildResolverUserMessage({
+  runId: 't', history: [{ role: 'user', content: 'established homeowners' }], currentSlots: {},
+});
+check('the resolver is told which slot the reply answers', withHint.includes('maturity_tier'));
+check('and told not to leave a directly-answered slot null', withHint.includes('asked again'));
+check('no hint is injected when nothing was asked', !withoutHint.includes('LAST QUESTION WAS AIMED AT'));
 
 // The website is requested in the opening turn and never chased after that.
 const bareBrief = computeReadiness(

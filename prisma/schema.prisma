@@ -29,6 +29,13 @@ model Run {
   missing     Json @default("[]")
   ambiguities Json @default("[]")
 
+  /// Which slot the last question targeted, and how many times it has been put
+  /// to the user. This is the hard loop-breaker: a slot asked twice without
+  /// landing is assumed or skipped, never asked a third time. Without a counter,
+  /// a slot the resolver cannot map produces the same question forever.
+  lastAskedSlot  String?
+  lastAskedCount Int     @default(0)
+
   /// Website fetch. Non-fatal: failure is mentioned once in chat, never blocks.
   siteContext     String?
   siteFetchStatus String? // pending | ok | failed | skipped

@@ -31,6 +31,14 @@ export interface ResolveInput {
   /** Currently stored brief, so the resolver can carry values forward. */
   currentSlots: SlotValues;
   siteContext?: string | null;
+  /**
+   * The slot the consultant's most recent question was aiming at. Without this
+   * the resolver reads the reply cold: "established homeowners who've dealt
+   * with plumbing before" is ambiguous in isolation but unmistakable as an
+   * answer to a maturity question. Missing this context is what produces
+   * repeated questions.
+   */
+  lastAskedSlot?: string | null;
   signal?: AbortSignal;
 }
 
@@ -49,6 +57,19 @@ audience_type       "direct_buyer" | "clients_customer" | "channel_partner" | nu
                                     channel_partner  = the ICP is a referrer, reseller or alliance partner
 maturity_tier       "newbie" | "intermediate" | "advanced" | null
                                     Maturity of the TARGET ICP, not the user's own company.
+                                    The framework words these in business terms, but the slot applies to BOTH models.
+                                    For b2b — read team size, process maturity, volume, specialisation:
+                                      newbie       early-stage, lean, owner does everything, low volume
+                                      intermediate growing, some systems, roles emerging, consistent demand
+                                      advanced     established, strong ops, specialised roles, complex decisions
+                                    For b2c — read life stage, tenure and experience, NOT company traits:
+                                      newbie       first-timers, young, renting, no prior experience of this purchase
+                                      intermediate established, owns/commits, has bought this category before
+                                      advanced     affluent or highly experienced, repeat or complex needs, high standards
+                                    THIS SLOT IS ALMOST ALWAYS INFERABLE. "Homeowners, forty-plus, own their place" is
+                                    intermediate. "Practices with 2-4 chairs and a practice manager" is intermediate.
+                                    "First home buyers" is newbie. Do NOT return null just because the user did not use
+                                    the words newbie/intermediate/advanced — infer it and mark the source "inferred".
 industry            string | null   The industry of the ICP being targeted. Short noun phrase, e.g. "Dental practices".
 offer_type          string | null   What is being sold to the ICP, e.g. "Monthly SEO retainer".
 services            array | null    1..${SERVICE_CAP} objects: { "name": string, "price_terms": string | null }
@@ -228,7 +249,8 @@ ${FEW_SHOTS}
 Return ONLY a JSON object with keys: slots, meta, missing, ambiguities.
 `.trim();
 
-function buildUserMessage(input: ResolveInput): string {
+/** Exported so the self-test can assert the target-slot hint is present. */
+export function buildResolverUserMessage(input: ResolveInput): string {
   const parts: string[] = [];
 
   parts.push('CURRENT BRIEF (carry these forward unless contradicted):');
@@ -251,6 +273,18 @@ function buildUserMessage(input: ResolveInput): string {
     parts.push(`${who}: ${message.content}`);
   }
 
+  if (input.lastAskedSlot) {
+    parts.push('');
+    parts.push(
+      `THE CONSULTANT'S LAST QUESTION WAS AIMED AT: ${input.lastAskedSlot}\n` +
+        `The strategist's final message is most likely answering THAT slot. Read it as an answer to that question ` +
+        `first, and only then as general context. If the reply plausibly settles ${input.lastAskedSlot} — even loosely, ` +
+        `even in their own words rather than the schema's — resolve it and mark the source "stated". ` +
+        `Leaving it null after the user has directly answered it makes the same question get asked again, which is ` +
+        `the single worst failure this system can produce.`,
+    );
+  }
+
   parts.push('');
   parts.push('Resolve the brief now. JSON only.');
   return parts.join('\n');
@@ -266,7 +300,7 @@ export interface ResolveResult {
 export async function resolveSlots(input: ResolveInput): Promise<ResolveResult> {
   const messages: ChatCompletionMessageParam[] = [
     { role: 'system', content: RESOLVER_SYSTEM },
-    { role: 'user', content: buildUserMessage(input) },
+    { role: 'user', content: buildResolverUserMessage(input) },
   ];
 
   const { text } = await complete({

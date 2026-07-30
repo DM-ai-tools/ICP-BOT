@@ -449,6 +449,55 @@ export function computeReadiness(
 }
 
 // ---------------------------------------------------------------------------
+// Ask tracking — the loop-breaker
+//
+// A slot can fail to resolve even when the user answered it perfectly well:
+// the resolver may not map their words onto the schema. If the only guard is
+// "did they say I don't know", the slot stays empty, stays top of the queue,
+// and the identical question comes back forever.
+//
+// So repetition is prevented by counting, not by understanding.
+// ---------------------------------------------------------------------------
+
+/** Total times a single slot may be put to the user before it is assumed. */
+export const MAX_ASKS_PER_SLOT = 2;
+
+export interface AskTracking {
+  lastAskedSlot: SlotKey | null;
+  lastAskedCount: number;
+}
+
+export interface AskDecision {
+  /** Slots to freeze permanently — never raise these again. */
+  freeze: SlotKey[];
+  /** Strike count to persist for the next turn. */
+  strikes: number;
+  /** The next question is a second attempt at the same gap. */
+  isRetry: boolean;
+}
+
+export function trackAsk(
+  tracking: AskTracking,
+  slots: SlotValues,
+  opts: { deflected?: boolean } = {},
+): AskDecision {
+  const { lastAskedSlot } = tracking;
+  if (!lastAskedSlot) return { freeze: [], strikes: 0, isRetry: false };
+
+  const landed = !isEmptySlot(lastAskedSlot, (slots as Record<string, unknown>)[lastAskedSlot]);
+  if (landed) return { freeze: [], strikes: 0, isRetry: false };
+
+  const strikes = (tracking.lastAskedCount ?? 0) + 1;
+
+  // Out of attempts, or the user explicitly declined to pin it down.
+  if (strikes >= MAX_ASKS_PER_SLOT || opts.deflected) {
+    return { freeze: [lastAskedSlot], strikes: 0, isRetry: false };
+  }
+
+  return { freeze: [], strikes, isRetry: true };
+}
+
+// ---------------------------------------------------------------------------
 // Master-prompt wording
 //
 // The master prompt names its inputs precisely. Anything we send must use its

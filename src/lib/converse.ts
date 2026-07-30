@@ -79,6 +79,13 @@ WHEN THE USER DOESN'T KNOW
   Under no circumstances does the same gap get asked twice. That is the single fastest way to make this feel
   like a form.
 
+NEVER ASK THE SAME THING TWICE
+  Before you write, read your own previous message. If your new question is the same question in different
+  clothes — same subject, reworded, hedged, or narrowed — you have failed, and the user will feel it
+  immediately. A user who answers "established homeowners who've dealt with this before" has ANSWERED. Take
+  it, say what you took from it if it needs confirming, and move to the next thing. Re-asking with extra
+  qualifiers appended is the worst possible response to a real answer.
+
 WHEN THEY PIVOT
   "Actually make it B2C", "scrap that, I meant the patients" — accept instantly. State plainly what changed
   and what it invalidates, in one line, then carry on from where you were. No defensiveness, no re-litigating
@@ -139,7 +146,7 @@ const ASK_GUIDANCE: Partial<Record<SlotKey, string>> = {
   company_name:
     'Get the name of their business — the one the ICP would see. Keep it to one short line.',
   maturity_tier:
-    'Establish how established the TARGET ICP is: early-stage and lean, growing with some systems, or established with specialised roles. Describe the tiers in their industry\'s own terms rather than naming the tiers abstractly. Propose the middle option, since it is right more often than not. If they deflect, take intermediate as an assumption and never raise it again.',
+    'Establish how established the target is. For a BUSINESS audience that means team size, process maturity and volume — lean owner-operator, growing with some systems, or established with specialised roles. For a CONSUMER audience it means life stage and experience — first-timers with no idea what to expect, established people who have been through this before, or affluent repeat buyers with high standards. Use their world\'s words, never the words newbie/intermediate/advanced, and never abstract phrases like "maturity" or "tier". Propose the reading their own description already implies and let them confirm in one word.',
   // website_url is deliberately absent: it is requested once in the opening
   // turn and never chased.
 };
@@ -158,6 +165,10 @@ interface TurnContext {
   invalidatedCount?: number;
   scenarioCount?: number;
   isFirstTurn: boolean;
+  /** The previous attempt at this same gap did not land. */
+  isRetry?: boolean;
+  /** Quoted back so the model can see what it must not repeat. */
+  lastAssistantMessage?: string | null;
 }
 
 function renderBrief(slots: SlotValues, meta: SlotMeta): string {
@@ -278,6 +289,21 @@ function buildTurnInstruction(ctx: TurnContext): string {
       parts.push(
         'Carry a proposed answer inside the question so the user can confirm with one word. Base the proposal on what you already know about them — a generic proposal is worse than none.',
       );
+
+      if (ctx.isRetry && ctx.lastAssistantMessage) {
+        parts.push('');
+        parts.push(
+          [
+            'THIS IS A SECOND ATTEMPT AT THE SAME GAP. Your previous message was:',
+            `"${ctx.lastAssistantMessage.trim().slice(0, 400)}"`,
+            'It did not land. Do NOT rephrase it — a reworded version of the same question reads as though you were',
+            'not listening, and it is the fastest way to destroy trust in this conversation.',
+            'Come at it from a completely different angle: offer two or three concrete options drawn from their',
+            'actual industry and region that they can answer in one word. Acknowledge their previous answer in one',
+            'clause first so it is clear you read it. This is the last time this gap may be raised.',
+          ].join(' '),
+        );
+      }
       if (ctx.readiness.lowConfidence.length && target) {
         const shaky = ctx.readiness.lowConfidence
           .filter((k) => k !== target)

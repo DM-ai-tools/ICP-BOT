@@ -36,6 +36,7 @@ import {
   computeReadiness,
   isEmptySlot,
   mergeResolution,
+  trackAsk,
   type SlotKey,
   type SlotValues,
 } from '@/lib/slots';
@@ -94,6 +95,9 @@ export async function POST(request: Request) {
     let changedSlots: SlotKey[] = [];
     let invalidatedCount = 0;
     let siteNotice: string | null = null;
+    /** Consecutive asks of the current target slot that have not landed. */
+    let askStrikes = 0;
+    let isRetry = false;
 
     const run = await loadRun(runId);
     if (!run) {
@@ -120,6 +124,7 @@ export async function POST(request: Request) {
           history,
           currentSlots: slots,
           siteContext: run.siteContext,
+          lastAskedSlot: run.lastAskedSlot,
           signal,
         });
 
@@ -180,8 +185,31 @@ export async function POST(request: Request) {
         writer.send({ type: 'notice', text: friendlyError(err) });
       }
 
-      // A deflection freezes the slot that was on the table so it is never
-      // asked twice.
+      // ---- the loop-breaker ---------------------------------------------
+      //
+      // The deflection regex alone is not enough. It catches "I don't know",
+      // but not the far worse case: the user answers properly, the resolver
+      // fails to map the answer onto the slot, the slot stays empty, and the
+      // exact same question comes back. That has to be impossible regardless
+      // of what the model does, so it is enforced by counting, not by
+      // understanding.
+      //
+      // One retry is allowed — a question can legitimately be misread once, and
+      // rephrasing often lands it. A slot still empty after two asks is
+      // assumed or skipped, and never raised again.
+      const decision = trackAsk(
+        {
+          lastAskedSlot: (run.lastAskedSlot as SlotKey | null) ?? null,
+          lastAskedCount: run.lastAskedCount,
+        },
+        slots,
+        { deflected: intent.isDeflection },
+      );
+      for (const key of decision.freeze) deflected.add(key);
+      askStrikes = decision.strikes;
+      isRetry = decision.isRetry;
+
+      // An explicit deflection freezes whatever is currently on the table too.
       if (intent.isDeflection) {
         const readinessNow = computeReadiness(slots, meta, {
           askedAndDeflected: [...deflected],
@@ -227,6 +255,16 @@ export async function POST(request: Request) {
       awarenessResolvedInChat: readiness.awarenessResolved,
     });
 
+    // Record what this turn is about to ask, so the next turn can tell whether
+    // the answer landed and the resolver knows which slot the reply targets.
+    await prisma.run.update({
+      where: { id: runId },
+      data: {
+        lastAskedSlot: readiness.nextAsk ?? null,
+        lastAskedCount: readiness.nextAsk ? askStrikes : 0,
+      },
+    });
+
     // ---- 5. pick the turn mode -------------------------------------------
     if (!userMessage) {
       turnMode = 'greeting';
@@ -250,6 +288,8 @@ export async function POST(request: Request) {
       changedSlots,
       invalidatedCount,
       isFirstTurn: history.length === 0,
+      isRetry,
+      lastAssistantMessage: [...history].reverse().find((m) => m.role === 'assistant')?.content ?? null,
     };
 
     // ---- 6. stream the reply ---------------------------------------------
