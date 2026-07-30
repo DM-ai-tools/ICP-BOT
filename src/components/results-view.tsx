@@ -1,23 +1,22 @@
 'use client';
 
 /**
- * Results: one tab per scenario (and per service where there is more than one),
- * with the comparison table as the first tab. Sticky in-document nav is built
- * from the master prompt's own headings, so it always matches the document.
+ * Results.
+ *
+ * This is where the product's own idea becomes visible. A prism splits one beam
+ * into a spectrum, and the four awareness stages ARE that spectrum — so each
+ * tab carries a position on a cold-to-warm ramp, as a 2px underline and a small
+ * marker. Never as a fill: the moment these become blocks of colour the screen
+ * stops being an instrument and starts being a chart.
+ *
+ * The in-document nav is built from the headings actually present, so it can
+ * never drift from the document it indexes.
  */
 import * as React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import {
-  AlertCircle,
-  Check,
-  Copy,
-  Download,
-  Layers,
-  RefreshCw,
-  Wrench,
-} from 'lucide-react';
-import { AWARENESS, awarenessShort } from '@/lib/awareness';
+import { AlertCircle, Check, Copy, Layers, RefreshCw, Wrench } from 'lucide-react';
+import { AWARENESS, awarenessShort, stageTone } from '@/lib/awareness';
 import { parseSections } from '@/lib/markdown';
 import { COMPARISON_COLUMNS } from '@/lib/comparison';
 import type { ComparisonSummary, DocumentSummary, RunState } from '@/lib/types';
@@ -25,14 +24,15 @@ import type { AwarenessKey } from '@/lib/slots';
 import {
   Badge,
   Button,
+  Divider,
+  Eyebrow,
+  Hint,
+  SkeletonText,
   Spinner,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
 } from '@/components/ui/primitives';
 import { ExportMenu } from '@/components/export-menu';
 import { cn } from '@/lib/utils';
@@ -50,12 +50,15 @@ export interface LiveDoc {
   error?: string;
 }
 
+/** Spectral position → the token that paints it. Index 0 is the non-staged tab. */
+const TONE_TEXT = ['', 'text-stage-1', 'text-stage-2', 'text-stage-3', 'text-stage-4'] as const;
+const TONE_BG = ['', 'bg-stage-1', 'bg-stage-2', 'bg-stage-3', 'bg-stage-4'] as const;
+
 interface ResultsViewProps {
   state: RunState;
   live: Record<string, LiveDoc>;
   markdownById: Record<string, string>;
   onRegenerate?: (scenario: AwarenessKey, serviceIndex: number) => void;
-  /** Pulls stored markdown for a saved document the first time it is opened. */
   onLoadDocument?: (documentId: string) => void;
   generating: boolean;
 }
@@ -75,16 +78,14 @@ export function ResultsView({
     const entries: {
       value: string;
       label: string;
+      tone: number;
       doc?: DocumentSummary;
       liveDoc?: LiveDoc;
     }[] = [];
 
-    if (hasComparison) {
-      entries.push({ value: 'comparison', label: 'Comparison' });
-    }
+    if (hasComparison) entries.push({ value: 'comparison', label: 'Comparison', tone: 0 });
 
     const seen = new Set<string>();
-
     for (const doc of state.documents) {
       if (doc.status === 'pending') continue;
       const value = `${doc.serviceIndex}:${doc.scenario}`;
@@ -92,34 +93,31 @@ export function ResultsView({
       entries.push({
         value,
         label: awarenessShort(doc.scenario),
+        tone: stageTone(doc.scenario),
         doc,
         liveDoc: live[value],
       });
     }
-
     for (const liveDoc of liveDocs) {
       if (seen.has(liveDoc.docKey)) continue;
       entries.push({
         value: liveDoc.docKey,
         label: awarenessShort(liveDoc.scenario),
+        tone: stageTone(liveDoc.scenario),
         liveDoc,
       });
     }
-
     return entries;
-  }, [state.documents, state.slots.services, live, liveDocs, hasComparison]);
+  }, [state.documents, live, liveDocs, hasComparison]);
 
-  const [active, setActive] = React.useState<string>('');
+  const [active, setActive] = React.useState('');
 
-  // Follow the first document that starts streaming, then leave the user alone.
   React.useEffect(() => {
     if (active && tabs.some((t) => t.value === active)) return;
-    const firstStreaming = tabs.find((t) => t.liveDoc && t.liveDoc.phase !== 'done');
-    setActive(firstStreaming?.value ?? tabs[0]?.value ?? '');
+    const streamingTab = tabs.find((t) => t.liveDoc && t.liveDoc.phase !== 'done');
+    setActive(streamingTab?.value ?? tabs[0]?.value ?? '');
   }, [tabs, active]);
 
-  // Saved documents keep their markdown in the database, not in the run state —
-  // fetch it the first time a tab is actually opened.
   React.useEffect(() => {
     if (!onLoadDocument || !active) return;
     const tab = tabs.find((t) => t.value === active);
@@ -132,30 +130,50 @@ export function ResultsView({
   if (!tabs.length) return null;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col bg-bg">
       <Tabs value={active} onValueChange={setActive} className="flex min-h-0 flex-1 flex-col">
-        <div className="shrink-0 border-b border-border px-4 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <TabsList className="max-w-full overflow-x-auto">
-              {tabs.map((tab) => (
-                <TabsTrigger key={tab.value} value={tab.value} className="shrink-0">
-                  {tab.value === 'comparison' ? (
-                    <>
-                      <Layers className="h-3.5 w-3.5" />
-                      Comparison
-                    </>
-                  ) : (
-                    <>
-                      <span>{tab.label}</span>
-                      <TabStatus doc={tab.doc} liveDoc={tab.liveDoc} />
-                    </>
-                  )}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+        <div className="chrome z-chrome flex shrink-0 items-center gap-3 border-b border-line px-3 py-2">
+          <TabsList className="min-w-0 flex-1 overflow-x-auto">
+            {tabs.map((tab) => (
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className="group relative shrink-0 pb-2 pt-1.5 data-[state=active]:bg-transparent"
+              >
+                {tab.value === 'comparison' ? (
+                  <>
+                    <Layers className="size-3.5" />
+                    <span>Comparison</span>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className={cn(
+                        'size-1.5 rounded-full transition-transform duration-base ease-spring',
+                        TONE_BG[tab.tone],
+                        active === tab.value ? 'scale-100' : 'scale-75 opacity-60',
+                      )}
+                    />
+                    <span>{tab.label}</span>
+                    <TabStatus doc={tab.doc} liveDoc={tab.liveDoc} tone={tab.tone} />
+                  </>
+                )}
 
-            <ExportMenu state={state} />
-          </div>
+                {/* The spectral underline. The only place the ramp appears this
+                    saturated, and only for the tab you are actually reading. */}
+                <span
+                  aria-hidden
+                  className={cn(
+                    'absolute inset-x-2 -bottom-px h-0.5 origin-left rounded-full transition-transform duration-base ease-snap',
+                    tab.tone ? TONE_BG[tab.tone] : 'bg-accent',
+                    active === tab.value ? 'scale-x-100' : 'scale-x-0',
+                  )}
+                />
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          <ExportMenu state={state} />
         </div>
 
         {hasComparison && (
@@ -178,6 +196,7 @@ export function ResultsView({
                 state={state}
                 doc={tab.doc}
                 liveDoc={tab.liveDoc}
+                tone={tab.tone}
                 loading={Boolean(
                   tab.doc &&
                     !tab.liveDoc &&
@@ -187,9 +206,7 @@ export function ResultsView({
                 markdown={
                   tab.liveDoc && tab.liveDoc.phase !== 'done'
                     ? tab.liveDoc.text
-                    : (tab.doc && markdownById[tab.doc.id]) ||
-                      tab.liveDoc?.text ||
-                      ''
+                    : (tab.doc && markdownById[tab.doc.id]) || tab.liveDoc?.text || ''
                 }
                 onRegenerate={onRegenerate}
                 generating={generating}
@@ -201,23 +218,24 @@ export function ResultsView({
   );
 }
 
-function TabStatus({ doc, liveDoc }: { doc?: DocumentSummary; liveDoc?: LiveDoc }) {
+function TabStatus({
+  doc,
+  liveDoc,
+  tone,
+}: {
+  doc?: DocumentSummary;
+  liveDoc?: LiveDoc;
+  tone: number;
+}) {
   if (liveDoc && liveDoc.phase !== 'done' && liveDoc.phase !== 'error') {
-    return <Spinner className="h-3 w-3" />;
+    return <Spinner className={cn('size-3', TONE_TEXT[tone])} />;
+  }
+  if (doc?.status === 'stale') {
+    return <span className="size-1.5 rounded-full bg-caution" title="Brief changed" />;
   }
   const badge = liveDoc?.badge ?? doc?.badge;
-  if (doc?.status === 'stale') {
-    return <span className="h-1.5 w-1.5 rounded-full bg-inferred" title="Brief changed" />;
-  }
-  if (badge === 'repaired') {
-    return <Wrench className="h-3 w-3 text-inferred" />;
-  }
-  if (badge === 'failed') {
-    return <AlertCircle className="h-3 w-3 text-destructive" />;
-  }
-  if (badge === 'complete') {
-    return <Check className="h-3 w-3 text-stated" />;
-  }
+  if (badge === 'repaired') return <Wrench className="size-3 text-caution" />;
+  if (badge === 'failed') return <AlertCircle className="size-3 text-critical" />;
   return null;
 }
 
@@ -230,6 +248,7 @@ function DocumentView({
   doc,
   liveDoc,
   markdown,
+  tone,
   loading,
   onRegenerate,
   generating,
@@ -238,121 +257,131 @@ function DocumentView({
   doc?: DocumentSummary;
   liveDoc?: LiveDoc;
   markdown: string;
+  tone: number;
   loading?: boolean;
   onRegenerate?: (scenario: AwarenessKey, serviceIndex: number) => void;
   generating: boolean;
 }) {
   const sections = React.useMemo(() => parseSections(markdown), [markdown]);
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  const [activeAnchor, setActiveAnchor] = React.useState<string>('');
+  const [activeAnchor, setActiveAnchor] = React.useState('');
 
   const streaming = Boolean(liveDoc && liveDoc.phase !== 'done' && liveDoc.phase !== 'error');
   const badge = liveDoc?.badge ?? doc?.badge ?? null;
   const scenario = doc?.scenario ?? liveDoc?.scenario;
   const serviceIndex = doc?.serviceIndex ?? liveDoc?.serviceIndex ?? 0;
 
-  // Auto-follow the stream only while the user is at the bottom.
   React.useEffect(() => {
     if (!streaming) return;
-    const element = scrollRef.current;
-    if (!element) return;
-    const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-    if (distance < 300) element.scrollTop = element.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 320) el.scrollTop = el.scrollHeight;
   }, [markdown, streaming]);
 
   React.useEffect(() => {
-    const element = scrollRef.current;
-    if (!element || streaming) return;
+    const el = scrollRef.current;
+    if (!el || streaming) return;
 
     const onScroll = () => {
-      const headings = element.querySelectorAll('[data-anchor]');
+      const headings = el.querySelectorAll('[data-anchor]');
       let current = '';
       for (const heading of Array.from(headings)) {
-        if (heading.getBoundingClientRect().top - element.getBoundingClientRect().top < 90) {
+        if (heading.getBoundingClientRect().top - el.getBoundingClientRect().top < 96) {
           current = heading.getAttribute('data-anchor') ?? '';
         }
       }
       setActiveAnchor(current);
     };
 
-    element.addEventListener('scroll', onScroll, { passive: true });
+    el.addEventListener('scroll', onScroll, { passive: true });
     onScroll();
-    return () => element.removeEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
   }, [streaming, markdown]);
 
   return (
     <div className="flex h-full min-h-0">
-      {/* Sticky in-document nav, built from the headings actually present. */}
-      <nav className="hidden w-56 shrink-0 overflow-y-auto border-r border-border px-3 py-5 lg:block">
-        <p className="mb-2.5 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
-          In this profile
-        </p>
-        <ul className="space-y-0.5">
-          {sections.map((section) => (
-            <li key={section.anchor}>
-              <button
-                type="button"
-                onClick={() => {
-                  scrollRef.current
-                    ?.querySelector(`[data-anchor="${section.anchor}"]`)
-                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }}
-                className={cn(
-                  'w-full truncate rounded-md px-2 py-1.5 text-left text-[12.5px] leading-snug transition-colors',
-                  activeAnchor === section.anchor
-                    ? 'bg-secondary font-medium text-foreground'
-                    : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground',
-                  section.level === 1 && 'font-medium',
-                )}
-                title={section.heading}
-              >
-                {section.heading}
-              </button>
-            </li>
-          ))}
+      {/* ---- in-document nav ---------------------------------------------- */}
+      <nav className="hidden w-52 shrink-0 overflow-y-auto border-r border-line px-2.5 py-5 xl:block">
+        <Eyebrow className="mb-2.5 px-2">In this profile</Eyebrow>
+        <ul className="space-y-px">
+          {sections.map((section) => {
+            const isActive = activeAnchor === section.anchor;
+            return (
+              <li key={section.anchor}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    scrollRef.current
+                      ?.querySelector(`[data-anchor="${section.anchor}"]`)
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }
+                  title={section.heading}
+                  className={cn(
+                    'relative w-full truncate rounded-sm py-1.5 pl-3 pr-2 text-left text-xs leading-snug transition-colors duration-fast',
+                    isActive
+                      ? 'bg-surface-2 font-medium text-fg'
+                      : 'text-fg-muted hover:bg-surface-2/60 hover:text-fg-secondary',
+                  )}
+                >
+                  {/* Active marker rides this document's spectral hue. */}
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'absolute inset-y-1 left-0 w-0.5 rounded-full transition-transform duration-base ease-snap',
+                      TONE_BG[tone],
+                      isActive ? 'scale-y-100' : 'scale-y-0',
+                    )}
+                  />
+                  {section.heading}
+                </button>
+              </li>
+            );
+          })}
           {!sections.length && (
-            <li className="px-2 text-[12.5px] text-muted-foreground">Writing…</li>
+            <li className="space-y-2 px-2 pt-1">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} className="skeleton h-3" style={{ width: `${88 - i * 9}%` }} />
+              ))}
+            </li>
           )}
         </ul>
       </nav>
 
+      {/* ---- document ------------------------------------------------------ */}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-7 sm:px-10">
-          <div className="mb-6 flex flex-wrap items-center gap-2">
+          <div className="mb-7 flex flex-wrap items-center gap-2">
             {scenario && (
-              <Badge tone="accent">{AWARENESS[scenario]?.label ?? scenario}</Badge>
+              <span className="inline-flex items-center gap-1.5">
+                <span className={cn('size-1.5 rounded-full', TONE_BG[tone])} />
+                <span className={cn('text-xs font-semibold', TONE_TEXT[tone])}>
+                  {AWARENESS[scenario]?.label ?? scenario}
+                </span>
+              </span>
             )}
-            {badge === 'complete' && <Badge tone="stated">Complete</Badge>}
+
+            <Divider orientation="vertical" className="mx-0.5 h-3.5 self-center" />
+
+            {badge === 'complete' && <Badge tone="positive">Complete</Badge>}
             {badge === 'repaired' && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Badge tone="warn">Repaired</Badge>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  One or more sections came back thin and were expanded before saving.
-                </TooltipContent>
-              </Tooltip>
+              <Hint label="One or more sections came back thin and were expanded before saving.">
+                <span>
+                  <Badge tone="caution">Repaired</Badge>
+                </span>
+              </Hint>
             )}
-            {badge === 'failed' && <Badge tone="danger">Needs review</Badge>}
+            {badge === 'failed' && <Badge tone="critical">Needs review</Badge>}
             {doc?.status === 'stale' && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Badge tone="warn">Brief changed</Badge>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  The brief was edited after this was written, so it no longer matches. Rebuild it
-                  before sending it anywhere.
-                </TooltipContent>
-              </Tooltip>
+              <Hint label="The brief was edited after this was written, so it no longer matches. Rebuild before sending it anywhere.">
+                <span>
+                  <Badge tone="caution">Brief changed</Badge>
+                </span>
+              </Hint>
             )}
-            {state.regulated && <Badge tone="warn">Regulated</Badge>}
+            {state.regulated && <Badge tone="neutral">Regulated</Badge>}
 
             <div className="ml-auto flex items-center gap-1">
-              {doc && <CopyButton text={markdown} label="Copy all" />}
+              {doc && <CopyButton text={markdown} label="Copy" />}
               {doc && onRegenerate && scenario && (
                 <Button
                   variant="ghost"
@@ -367,68 +396,44 @@ function DocumentView({
             </div>
           </div>
 
-          {liveDoc?.error && (
-            <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/[0.06] px-4 py-3">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-              <p className="text-[13px] leading-relaxed text-muted-foreground">{liveDoc.error}</p>
-            </div>
-          )}
+          {liveDoc?.error && <Callout tone="critical" body={liveDoc.error} />}
 
-          {/* Shown only when a section carrying real substance fell short.
-              Cosmetic shortfalls never reach errorMessage, and a document that
-              passed does not get a warning box explaining that it passed. */}
           {doc?.errorMessage && doc.badge === 'failed' && !liveDoc?.error && (
-            <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-inferred/30 bg-inferred/[0.06] px-4 py-3">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-inferred" />
-              <p className="text-[13px] leading-relaxed text-muted-foreground">
-                {doc.errorMessage}
-              </p>
-            </div>
+            <Callout tone="caution" body={doc.errorMessage} />
           )}
 
           {streaming && (
-            <div className="mb-5 flex items-center gap-2.5 text-[13px] text-muted-foreground">
-              <Spinner className="h-3.5 w-3.5" />
-              <span>{phaseLabel(liveDoc)}</span>
+            <div className="mb-6 flex items-center gap-2.5">
+              <Spinner className={cn('size-3.5', TONE_TEXT[tone])} />
+              <span className="text-sm text-fg-muted">{phaseLabel(liveDoc)}</span>
             </div>
           )}
 
-          {loading && !markdown && (
-            <div className="space-y-3" aria-label="Loading profile">
-              {[92, 78, 96, 61, 88, 70].map((width, index) => (
-                <div
-                  key={index}
-                  className="h-4 animate-pulse rounded bg-secondary"
-                  style={{ width: `${width}%` }}
-                />
-              ))}
-            </div>
-          )}
+          {loading && !markdown && <DocumentSkeleton />}
 
           <article className="prose-icp">
-            {sections.length ? (
-              sections.map((section) => (
-                <section key={section.anchor}>
-                  <SectionHeading section={section} />
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.body}</ReactMarkdown>
-                  <div className="mt-1 flex justify-end">
-                    <CopyButton
-                      text={`${'#'.repeat(section.level)} ${section.heading}\n\n${section.body}`}
-                      label="Copy section"
-                      subtle
-                    />
-                  </div>
-                </section>
-              ))
-            ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
-            )}
-            {streaming && <span className="streaming-caret" aria-hidden="true" />}
+            {sections.length
+              ? sections.map((section) => (
+                  <section key={section.anchor} className="group/section">
+                    <SectionHeading section={section} />
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{section.body}</ReactMarkdown>
+                    <div className="mt-1.5 flex justify-end opacity-0 transition-opacity duration-base focus-within:opacity-100 group-hover/section:opacity-100">
+                      <CopyButton
+                        text={`${'#'.repeat(section.level)} ${section.heading}\n\n${section.body}`}
+                        label="Copy section"
+                      />
+                    </div>
+                  </section>
+                ))
+              : !loading && <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>}
+            {streaming && <span className="streaming-caret" aria-hidden />}
           </article>
 
           {doc && (
-            <footer className="mt-10 border-t border-border pt-4 text-[11.5px] text-muted-foreground">
-              {doc.wordCount.toLocaleString()} words · master prompt {doc.masterPromptVersion}
+            <footer className="mt-12 border-t border-line pt-4">
+              <p className="mono text-2xs tabular text-fg-subtle">
+                {doc.wordCount.toLocaleString()} words · master prompt {doc.masterPromptVersion}
+              </p>
             </footer>
           )}
         </div>
@@ -446,6 +451,45 @@ function SectionHeading({
   if (section.level === 1) return <h1 {...props}>{section.heading}</h1>;
   if (section.level === 2) return <h2 {...props}>{section.heading}</h2>;
   return <h3 {...props}>{section.heading}</h3>;
+}
+
+/** Shaped like the document that is coming, not a generic grey box. */
+function DocumentSkeleton() {
+  return (
+    <div className="space-y-9" aria-label="Loading profile">
+      <div className="space-y-3">
+        <div className="skeleton h-7 w-[70%]" />
+        <div className="skeleton h-3.5 w-[34%]" />
+      </div>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="space-y-3">
+          <div className="skeleton h-2.5 w-[22%]" />
+          <SkeletonText lines={4} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Callout({ tone, body }: { tone: 'critical' | 'caution'; body: string }) {
+  return (
+    <div
+      className={cn(
+        'mb-6 flex items-start gap-2.5 rounded-lg border px-4 py-3 animate-rise',
+        tone === 'critical'
+          ? 'border-critical/25 bg-critical/[0.06]'
+          : 'border-caution/25 bg-caution/[0.07]',
+      )}
+    >
+      <AlertCircle
+        className={cn(
+          'mt-0.5 size-4 shrink-0',
+          tone === 'critical' ? 'text-critical' : 'text-caution',
+        )}
+      />
+      <p className="text-base leading-relaxed text-fg-secondary">{body}</p>
+    </div>
+  );
 }
 
 function phaseLabel(liveDoc?: LiveDoc): string {
@@ -471,25 +515,24 @@ function phaseLabel(liveDoc?: LiveDoc): string {
 
 function ComparisonTable({ comparison }: { comparison: ComparisonSummary }) {
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8 sm:px-8">
-      <header className="mb-6">
-        <h2 className="text-xl font-semibold tracking-tight">
-          Awareness map — {comparison.serviceName}
-        </h2>
-        <p className="mt-1.5 max-w-2xl text-[14px] leading-relaxed text-muted-foreground text-pretty">
-          The same buyer, five different conversations. The message that wins one stage is usually
-          the message that loses another — that&rsquo;s what this table is for.
+    <div className="mx-auto max-w-6xl px-6 py-9 sm:px-8">
+      <header className="stagger mb-7 max-w-2xl">
+        <Eyebrow className="mb-2.5">Awareness map</Eyebrow>
+        <h2 className="display text-3xl text-balance text-fg">{comparison.serviceName}</h2>
+        <p className="mt-2.5 text-md leading-relaxed text-pretty text-fg-muted">
+          The same buyer, four different conversations. The message that wins one stage is usually
+          the message that loses another — that is what this table is for.
         </p>
       </header>
 
-      <div className="overflow-x-auto rounded-xl border border-border">
-        <table className="w-full min-w-[900px] border-collapse text-left text-[13.5px]">
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface-1 shadow-e1">
+        <table className="w-full min-w-[52rem] border-collapse text-left">
           <thead>
-            <tr className="bg-secondary/60">
+            <tr className="bg-surface-2">
               {COMPARISON_COLUMNS.map((column) => (
                 <th
                   key={column.key}
-                  className="border-b border-border px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                  className="border-b border-line px-4 py-3 text-2xs font-semibold uppercase tracking-[0.09em] text-fg-muted"
                 >
                   {column.label}
                 </th>
@@ -497,22 +540,38 @@ function ComparisonTable({ comparison }: { comparison: ComparisonSummary }) {
             </tr>
           </thead>
           <tbody>
-            {comparison.rows.map((row) => (
-              <tr key={row.scenario} className="align-top even:bg-secondary/25">
-                {COMPARISON_COLUMNS.map((column) => (
-                  <td
-                    key={column.key}
-                    className={cn(
-                      'border-b border-border/60 px-4 py-3.5 leading-relaxed',
-                      column.key === 'awarenessLabel' && 'whitespace-nowrap font-medium',
-                      column.key === 'messageThatBackfires' && 'text-muted-foreground',
-                    )}
-                  >
-                    {String(row[column.key] ?? '')}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {comparison.rows.map((row) => {
+              const tone = stageTone(row.scenario);
+              return (
+                <tr
+                  key={row.scenario}
+                  className="group align-top transition-colors duration-fast hover:bg-surface-2/60"
+                >
+                  {COMPARISON_COLUMNS.map((column, index) => (
+                    <td
+                      key={column.key}
+                      className={cn(
+                        'relative border-b border-line-subtle px-4 py-4 text-base leading-relaxed',
+                        column.key === 'awarenessLabel' && 'whitespace-nowrap font-medium text-fg',
+                        column.key === 'messageThatBackfires' && 'text-fg-muted',
+                      )}
+                    >
+                      {/* Spectral spine on the leading cell — the row's identity. */}
+                      {index === 0 && (
+                        <span
+                          aria-hidden
+                          className={cn(
+                            'absolute inset-y-3 left-0 w-0.5 rounded-full',
+                            TONE_BG[tone],
+                          )}
+                        />
+                      )}
+                      {String(row[column.key] ?? '')}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -521,36 +580,25 @@ function ComparisonTable({ comparison }: { comparison: ComparisonSummary }) {
 }
 
 // ---------------------------------------------------------------------------
-// Bits
-// ---------------------------------------------------------------------------
 
-function CopyButton({
-  text,
-  label,
-  subtle,
-}: {
-  text: string;
-  label: string;
-  subtle?: boolean;
-}) {
+function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = React.useState(false);
 
   return (
     <Button
       variant="ghost"
       size="xs"
-      className={subtle ? 'opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 group-hover:opacity-60' : undefined}
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(text);
           setCopied(true);
           setTimeout(() => setCopied(false), 1600);
         } catch {
-          // Clipboard is permission-gated; a silent no-op beats an error toast.
+          /* clipboard is permission-gated; a silent no-op beats an error toast */
         }
       }}
     >
-      {copied ? <Check /> : <Copy />}
+      {copied ? <Check className="text-positive" /> : <Copy />}
       {copied ? 'Copied' : label}
     </Button>
   );

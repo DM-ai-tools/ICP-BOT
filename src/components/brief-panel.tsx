@@ -3,15 +3,27 @@
 /**
  * The live brief.
  *
- * This is where progress is visible — which is precisely why the chat never
- * narrates it. Every value is click-to-edit, and every value carries its
- * provenance: told to me, worked out, or still open.
+ * This is where progress is visible, which is precisely why the chat never
+ * narrates it. Every value is click-to-edit and carries its provenance — told
+ * to me, worked out, or still open — as a coloured dot rather than a word, so
+ * the column reads as one scannable stripe of state.
+ *
+ * The completion meter is the only ambient motion here. It moves when the brief
+ * moves and at no other time, which is what makes it informative rather than
+ * decorative.
  */
 import * as React from 'react';
-import { AlertTriangle, Check, Pencil, ShieldAlert, Sparkles, X } from 'lucide-react';
 import {
-  AWARENESS,
-} from '@/lib/awareness';
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  Pencil,
+  PictureInPicture2,
+  ShieldAlert,
+  Sparkles,
+  X,
+} from 'lucide-react';
+import { AWARENESS } from '@/lib/awareness';
 import {
   SERVICE_CAP,
   SLOT_ENUM_OPTIONS,
@@ -26,7 +38,10 @@ import {
 import type { RunState } from '@/lib/types';
 import {
   Button,
+  Eyebrow,
+  Hint,
   Input,
+  Meter,
   Spinner,
   Tooltip,
   TooltipContent,
@@ -50,29 +65,48 @@ const PANEL_ORDER: SlotKey[] = [
   'notes',
 ];
 
-const OPTIONAL_KEYS = new Set<SlotKey>(['offer_type', 'size_band', 'notes', 'website_url']);
+const OPTIONAL: ReadonlySet<SlotKey> = new Set<SlotKey>([
+  'offer_type',
+  'size_band',
+  'notes',
+  'website_url',
+]);
+
+/** The run of slots that actually gates generation. */
+const REQUIRED_ORDER = PANEL_ORDER.filter((key) => !OPTIONAL.has(key));
 
 interface BriefPanelProps {
   state: RunState | null;
   onEdit: (key: SlotKey, value: unknown) => Promise<void>;
-  /** Rebuild every scenario. Generation starts on its own the first time. */
   onBuild: () => void;
   busy?: boolean;
+  docked?: boolean;
+  onDock?: (docked: boolean) => void;
 }
 
-export function BriefPanel({ state, onEdit, onBuild, busy }: BriefPanelProps) {
+export function BriefPanel({
+  state,
+  onEdit,
+  onBuild,
+  busy,
+  docked = true,
+  onDock,
+}: BriefPanelProps) {
   const [editing, setEditing] = React.useState<SlotKey | null>(null);
   const [saving, setSaving] = React.useState<SlotKey | null>(null);
+  const [showOptional, setShowOptional] = React.useState(false);
 
   const slots = state?.slots ?? {};
   const meta = state?.slotMeta ?? {};
 
-  const filled = PANEL_ORDER.filter(
-    (key) => !OPTIONAL_KEYS.has(key) && !isEmptySlot(key, (slots as Record<string, unknown>)[key]),
+  const filled = REQUIRED_ORDER.filter(
+    (key) => !isEmptySlot(key, (slots as Record<string, unknown>)[key]),
   ).length;
-  const total = PANEL_ORDER.filter((key) => !OPTIONAL_KEYS.has(key)).length;
+  const total = REQUIRED_ORDER.length;
+  const pct = total ? (filled / total) * 100 : 0;
+  const complete = filled === total;
 
-  const handleSave = async (key: SlotKey, value: unknown) => {
+  const save = async (key: SlotKey, value: unknown) => {
     setSaving(key);
     try {
       await onEdit(key, value);
@@ -83,47 +117,58 @@ export function BriefPanel({ state, onEdit, onBuild, busy }: BriefPanelProps) {
   };
 
   return (
-    <aside className="flex h-full flex-col overflow-hidden border-l border-border bg-surface/60">
-      <header className="shrink-0 border-b border-border px-5 py-4">
-        <div className="flex items-baseline justify-between gap-3">
-          <h2 className="text-[13px] font-semibold uppercase tracking-[0.11em] text-muted-foreground">
-            The brief
-          </h2>
-          <span className="text-xs tabular-nums text-muted-foreground/80">
-            {filled}/{total}
-          </span>
+    <aside className="flex h-full min-h-0 w-full flex-col border-l border-line bg-surface-2">
+      <header className="shrink-0 px-4 pb-3.5 pt-4">
+        <div className="flex items-center justify-between gap-2">
+          <Eyebrow>The brief</Eyebrow>
+          <div className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                'mono text-2xs tabular transition-colors duration-base',
+                complete ? 'text-positive' : 'text-fg-subtle',
+              )}
+            >
+              {filled}/{total}
+            </span>
+            {onDock && (
+              <Hint label={docked ? 'Float this panel' : 'Dock to the side'} side="left">
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="hidden md:inline-flex"
+                  onClick={() => onDock(!docked)}
+                  aria-label={docked ? 'Float the brief' : 'Dock the brief'}
+                >
+                  <PictureInPicture2 />
+                </Button>
+              </Hint>
+            )}
+          </div>
         </div>
-        <div className="mt-3 h-1 overflow-hidden rounded-full bg-border">
-          <div
-            className="h-full rounded-full bg-accent transition-[width] duration-500 ease-out"
-            style={{ width: `${total ? (filled / total) * 100 : 0}%` }}
-          />
-        </div>
+        <Meter value={pct} className="mt-3" />
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {state?.regulated && (
-          <div className="mb-3 flex items-start gap-2.5 rounded-lg border border-inferred/30 bg-inferred/[0.07] px-3 py-2.5">
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-inferred" />
-            <p className="text-[12.5px] leading-snug text-muted-foreground">
-              <span className="font-medium text-foreground">Regulated industry</span>
-              {state.regulatedReason ? ` (${state.regulatedReason})` : ''}. Compliance-aware
-              language is enforced — no guarantees, no invented outcomes.
-            </p>
-          </div>
+          <Flag
+            icon={<ShieldAlert className="size-3.5" />}
+            tone="caution"
+            title="Regulated industry"
+            body={`${state.regulatedReason ? `${state.regulatedReason}. ` : ''}Compliance-aware language is enforced — no guarantees, no invented outcomes.`}
+          />
         )}
 
         {state?.siteFetchStatus === 'failed' && (
-          <div className="mb-3 flex items-start gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-            <p className="text-[12.5px] leading-snug text-muted-foreground">
-              Couldn&rsquo;t read that website. Everything else is unaffected.
-            </p>
-          </div>
+          <Flag
+            icon={<AlertTriangle className="size-3.5" />}
+            tone="neutral"
+            title="Website unreadable"
+            body="Nothing was pulled from it. Everything else is unaffected."
+          />
         )}
 
-        <div className="space-y-0.5">
-          {PANEL_ORDER.map((key) => (
+        <div className="mt-1">
+          {REQUIRED_ORDER.map((key) => (
             <SlotRow
               key={key}
               slotKey={key}
@@ -133,20 +178,53 @@ export function BriefPanel({ state, onEdit, onBuild, busy }: BriefPanelProps) {
               saving={saving === key}
               onStartEdit={() => setEditing(key)}
               onCancel={() => setEditing(null)}
-              onSave={(value) => handleSave(key, value)}
-              onBuild={onBuild}
+              onSave={(value) => save(key, value)}
             />
           ))}
         </div>
 
+        {/* Optional slots are collapsed by design. They are never chased in
+            conversation, so giving them permanent visual weight would misstate
+            how much of the brief is actually outstanding. */}
+        <button
+          type="button"
+          onClick={() => setShowOptional((v) => !v)}
+          className="mt-3 flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-left text-2xs font-semibold uppercase tracking-[0.1em] text-fg-subtle transition-colors hover:text-fg-muted"
+        >
+          <ChevronDown
+            className={cn(
+              'size-3 transition-transform duration-base ease-snap',
+              showOptional && 'rotate-180',
+            )}
+          />
+          Optional
+        </button>
+
+        {showOptional && (
+          <div className="animate-fade">
+            {PANEL_ORDER.filter((key) => OPTIONAL.has(key)).map((key) => (
+              <SlotRow
+                key={key}
+                slotKey={key}
+                slots={slots}
+                meta={meta}
+                optional
+                editing={editing === key}
+                saving={saving === key}
+                onStartEdit={() => setEditing(key)}
+                onCancel={() => setEditing(null)}
+                onSave={(value) => save(key, value)}
+              />
+            ))}
+          </div>
+        )}
+
         {state?.ambiguities && state.ambiguities.length > 0 && (
-          <div className="mt-4 rounded-lg border border-border bg-card px-3 py-2.5">
-            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Open questions
-            </p>
-            <ul className="space-y-1">
+          <div className="mx-1 mt-4 rounded-md border border-line bg-surface-1 px-3 py-2.5">
+            <Eyebrow className="mb-1.5">Open questions</Eyebrow>
+            <ul className="space-y-1.5">
               {state.ambiguities.slice(0, 4).map((item, index) => (
-                <li key={index} className="text-[12.5px] leading-snug text-muted-foreground">
+                <li key={index} className="text-xs leading-relaxed text-fg-muted">
                   {item}
                 </li>
               ))}
@@ -155,27 +233,22 @@ export function BriefPanel({ state, onEdit, onBuild, busy }: BriefPanelProps) {
         )}
       </div>
 
-      <footer className="shrink-0 border-t border-border px-4 py-3.5">
+      <footer className="shrink-0 border-t border-line px-3 py-3">
         {state?.readiness.readyToGenerate ? (
-          <Button
-            variant="accent"
-            className="w-full"
-            onClick={onBuild}
-            disabled={busy}
-          >
-            {busy ? <Spinner /> : <Sparkles />}
+          <Button variant="accent" className="w-full" onClick={onBuild} loading={busy}>
+            <Sparkles />
             {state.documents.length ? 'Rebuild all four' : 'Build the profiles'}
           </Button>
         ) : (
-          <p className="text-center text-[12.5px] leading-snug text-muted-foreground">
-            {state?.readiness.missingRequired.length
-              ? 'Keep talking — the brief fills itself in.'
-              : 'Tell me about your business to get started.'}
+          <p className="px-1 text-center text-xs leading-relaxed text-fg-subtle">
+            {filled > 0
+              ? 'Keep talking — this fills itself in.'
+              : 'Tell me about your business to begin.'}
           </p>
         )}
 
         {state && state.usage.costUsd > 0 && (
-          <p className="mt-2.5 text-center text-[11px] tabular-nums text-muted-foreground/60">
+          <p className="mono mt-2.5 text-center text-2xs tabular text-fg-subtle/70">
             {(state.usage.promptTokens + state.usage.completionTokens).toLocaleString()} tokens ·{' '}
             {state.usage.costUsd < 0.01 ? '<$0.01' : `$${state.usage.costUsd.toFixed(2)}`}
           </p>
@@ -186,47 +259,70 @@ export function BriefPanel({ state, onEdit, onBuild, busy }: BriefPanelProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Row
-// ---------------------------------------------------------------------------
+
+function Flag({
+  icon,
+  tone,
+  title,
+  body,
+}: {
+  icon: React.ReactNode;
+  tone: 'caution' | 'neutral';
+  title: string;
+  body: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'mx-1 mt-2 flex items-start gap-2.5 rounded-md border px-3 py-2.5 animate-rise',
+        tone === 'caution' ? 'border-caution/25 bg-caution/[0.07]' : 'border-line bg-surface-1',
+      )}
+    >
+      <span className={cn('mt-px shrink-0', tone === 'caution' ? 'text-caution' : 'text-fg-muted')}>
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-fg">{title}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-fg-muted">{body}</p>
+      </div>
+    </div>
+  );
+}
 
 interface SlotRowProps {
   slotKey: SlotKey;
   slots: SlotValues;
   meta: SlotMeta;
+  optional?: boolean;
   editing: boolean;
   saving: boolean;
   onStartEdit: () => void;
   onCancel: () => void;
   onSave: (value: unknown) => void;
-  onBuild: () => void;
 }
 
 function SlotRow({
   slotKey,
   slots,
   meta,
+  optional,
   editing,
   saving,
   onStartEdit,
   onCancel,
   onSave,
-  onBuild,
 }: SlotRowProps) {
   const spec = SLOT_SPECS.find((s) => s.key === slotKey);
   const value = (slots as Record<string, unknown>)[slotKey];
   const empty = isEmptySlot(slotKey, value);
   const entry = meta[slotKey];
   const display = slotDisplayValue(slotKey, slots);
-
   const source = empty ? 'missing' : (entry?.source ?? 'stated');
-  const isOptional = OPTIONAL_KEYS.has(slotKey);
 
   if (editing) {
     return (
-      <div className="rounded-lg border border-accent/40 bg-card px-3 py-2.5 animate-fade-in">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          {spec?.label ?? slotKey}
-        </p>
+      <div className="mx-1 my-0.5 rounded-md border border-accent/40 bg-surface-1 px-3 py-2.5 shadow-e1 animate-fade">
+        <Eyebrow className="mb-2">{spec?.label ?? slotKey}</Eyebrow>
         <SlotEditor
           slotKey={slotKey}
           slots={slots}
@@ -238,93 +334,90 @@ function SlotRow({
     );
   }
 
+  // Awareness has no picker any more — every run builds all four stages — so
+  // the row states that rather than offering an edit that leads nowhere.
+  const isAwareness = slotKey === 'awareness_level';
+
   return (
-    <div
+    <button
+      type="button"
+      onClick={isAwareness ? undefined : onStartEdit}
+      disabled={isAwareness}
+      aria-label={isAwareness ? undefined : `Edit ${spec?.label ?? slotKey}`}
       className={cn(
-        'group flex items-start gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-card',
-        empty && 'opacity-60',
+        'group flex w-full items-start gap-2.5 rounded-md px-3 py-2 text-left transition-colors duration-fast',
+        !isAwareness && 'hover:bg-surface-1',
+        empty && 'opacity-70 hover:opacity-100',
       )}
     >
-      <SourceDot source={source} justification={entry?.justification} confidence={entry?.confidence} />
+      <SourceDot source={source} entry={entry} />
 
-      <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          {spec?.label ?? slotKey}
-          {isOptional && empty && <span className="ml-1 normal-case tracking-normal">· optional</span>}
-        </p>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1.5">
+          <span className="text-2xs font-semibold uppercase tracking-[0.09em] text-fg-subtle">
+            {spec?.label ?? slotKey}
+          </span>
+          {optional && empty && (
+            <span className="text-2xs normal-case tracking-normal text-fg-subtle/60">optional</span>
+          )}
+        </span>
 
         {empty ? (
-          <p className="mt-0.5 text-[13px] italic text-muted-foreground/70">
-            {slotKey === 'awareness_level' ? 'chosen in the picker' : 'not set'}
-          </p>
+          <span className="mt-0.5 block text-base italic text-fg-subtle/80">
+            {isAwareness ? 'all four stages' : 'not set'}
+          </span>
         ) : (
-          <p className="mt-0.5 break-words text-[13.5px] leading-snug text-foreground">
-            {slotKey === 'awareness_level' && typeof value === 'string'
+          <span className="mt-0.5 block break-words text-base leading-snug text-fg">
+            {isAwareness && typeof value === 'string'
               ? (AWARENESS[value as keyof typeof AWARENESS]?.label ?? display)
               : display}
-          </p>
+          </span>
         )}
-      </div>
+      </span>
 
-      {slotKey === 'awareness_level' ? (
-        <span
-          className="shrink-0 px-2 text-[11px] text-muted-foreground"
-          title="Every run builds all four awareness stages"
-        >
-          all four
-        </span>
-      ) : (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onStartEdit}
-          className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-          aria-label={`Edit ${spec?.label ?? slotKey}`}
-        >
-          <Pencil />
-        </Button>
+      {!isAwareness && (
+        <Pencil className="mt-0.5 size-3 shrink-0 text-fg-subtle opacity-0 transition-opacity duration-fast group-hover:opacity-100" />
       )}
-    </div>
+    </button>
   );
 }
 
+const SOURCE_LABEL: Record<string, string> = {
+  stated: 'You told me this',
+  inferred: 'I worked this out',
+  default: 'Framework default',
+  missing: 'Still open',
+};
+
+const SOURCE_TONE: Record<string, string> = {
+  stated: 'bg-positive',
+  inferred: 'bg-caution',
+  default: 'bg-caution/50',
+  missing: 'bg-line-strong',
+};
+
 function SourceDot({
   source,
-  justification,
-  confidence,
+  entry,
 }: {
   source: string;
-  justification?: string;
-  confidence?: number;
+  entry?: { justification?: string; confidence?: number; source?: string };
 }) {
-  const colours: Record<string, string> = {
-    stated: 'bg-stated',
-    inferred: 'bg-inferred',
-    default: 'bg-inferred/60',
-    missing: 'bg-missing/50',
-  };
-
-  const labels: Record<string, string> = {
-    stated: 'You told me this',
-    inferred: 'I worked this out',
-    default: 'Framework default',
-    missing: 'Still open',
-  };
-
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span
-          className={cn('mt-[7px] h-2 w-2 shrink-0 cursor-help rounded-full', colours[source])}
-          aria-label={labels[source]}
-        />
+        <span className="mt-[7px] grid size-2 shrink-0 cursor-help place-items-center">
+          <span className={cn('size-[7px] rounded-full', SOURCE_TONE[source])} />
+        </span>
       </TooltipTrigger>
       <TooltipContent side="left">
-        <span className="font-medium">{labels[source]}</span>
-        {justification && <span className="mt-1 block text-muted-foreground">{justification}</span>}
-        {source === 'inferred' && typeof confidence === 'number' && (
-          <span className="mt-1 block text-muted-foreground">
-            Confidence {Math.round(confidence * 100)}%
+        <span className="font-semibold text-fg">{SOURCE_LABEL[source]}</span>
+        {entry?.justification && (
+          <span className="mt-1 block text-fg-muted">{entry.justification}</span>
+        )}
+        {source === 'inferred' && typeof entry?.confidence === 'number' && (
+          <span className="mono mt-1 block text-fg-subtle">
+            {Math.round(entry.confidence * 100)}% confidence
           </span>
         )}
       </TooltipContent>
@@ -354,7 +447,7 @@ function SlotEditor({
   if (options) {
     const current = (slots as Record<string, unknown>)[slotKey] as string | null;
     return (
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         {options.map((option) => (
           <button
             key={option.value}
@@ -362,16 +455,16 @@ function SlotEditor({
             disabled={saving}
             onClick={() => onSave(option.value)}
             className={cn(
-              'rounded-md border px-2.5 py-1.5 text-[12.5px] font-medium transition-colors focus-ring',
+              'rounded-sm border px-2 py-1 text-xs font-medium transition-all duration-fast',
               current === option.value
-                ? 'border-accent bg-accent/15 text-foreground'
-                : 'border-border bg-background hover:border-muted-foreground/40',
+                ? 'border-accent bg-accent/12 text-fg'
+                : 'border-line bg-surface-2 text-fg-secondary hover:border-line-strong hover:bg-surface-3',
             )}
           >
             {option.label}
           </button>
         ))}
-        <Button variant="ghost" size="icon-sm" onClick={onCancel} aria-label="Cancel">
+        <Button variant="ghost" size="icon-xs" onClick={onCancel} aria-label="Cancel">
           <X />
         </Button>
       </div>
@@ -382,7 +475,15 @@ function SlotEditor({
     return <ServicesEditor slots={slots} saving={saving} onCancel={onCancel} onSave={onSave} />;
   }
 
-  return <TextEditor slotKey={slotKey} slots={slots} saving={saving} onCancel={onCancel} onSave={onSave} />;
+  return (
+    <TextEditor
+      slotKey={slotKey}
+      slots={slots}
+      saving={saving}
+      onCancel={onCancel}
+      onSave={onSave}
+    />
+  );
 }
 
 function TextEditor({
@@ -400,17 +501,17 @@ function TextEditor({
 }) {
   const initial = ((slots as Record<string, unknown>)[slotKey] as string | null) ?? '';
   const [draft, setDraft] = React.useState(initial);
-  const inputRef = React.useRef<HTMLInputElement>(null);
+  const ref = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
+    ref.current?.focus();
+    ref.current?.select();
   }, []);
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1">
       <Input
-        ref={inputRef}
+        ref={ref}
         value={draft}
         disabled={saving}
         onChange={(event) => setDraft(event.target.value)}
@@ -418,7 +519,6 @@ function TextEditor({
           if (event.key === 'Enter') onSave(draft.trim() || null);
           if (event.key === 'Escape') onCancel();
         }}
-        className="h-8 text-[13px]"
       />
       <Button
         variant="ghost"
@@ -427,7 +527,7 @@ function TextEditor({
         onClick={() => onSave(draft.trim() || null)}
         aria-label="Save"
       >
-        {saving ? <Spinner className="h-3.5 w-3.5" /> : <Check />}
+        {saving ? <Spinner className="size-3.5" /> : <Check />}
       </Button>
       <Button variant="ghost" size="icon-sm" onClick={onCancel} aria-label="Cancel">
         <X />
@@ -452,33 +552,30 @@ function ServicesEditor({
     return existing.length ? existing.map((s) => ({ ...s })) : [{ name: '', price_terms: null }];
   });
 
-  const update = (index: number, patch: Partial<ServiceSlot>) => {
+  const update = (index: number, patch: Partial<ServiceSlot>) =>
     setDraft((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
-  };
 
   return (
     <div className="space-y-2">
       {draft.map((service, index) => (
-        <div key={index} className="space-y-1.5 rounded-md border border-border bg-background p-2">
+        <div key={index} className="space-y-1.5 rounded-sm border border-line bg-surface-2 p-2">
           <Input
             value={service.name}
             placeholder="Service name"
             disabled={saving}
             onChange={(event) => update(index, { name: event.target.value })}
-            className="h-8 text-[13px]"
           />
           <Input
             value={service.price_terms ?? ''}
-            placeholder="Price / terms — leave blank if not set"
+            placeholder="Price / terms — blank is fine"
             disabled={saving}
             onChange={(event) => update(index, { price_terms: event.target.value || null })}
-            className="h-8 text-[13px]"
           />
           {draft.length > 1 && (
             <button
               type="button"
               onClick={() => setDraft((prev) => prev.filter((_, i) => i !== index))}
-              className="text-[11.5px] text-muted-foreground underline underline-offset-2 hover:text-destructive"
+              className="text-2xs text-fg-subtle underline underline-offset-2 transition-colors hover:text-critical"
             >
               Remove
             </button>
@@ -491,21 +588,21 @@ function ServicesEditor({
           <button
             type="button"
             onClick={() => setDraft((prev) => [...prev, { name: '', price_terms: null }])}
-            className="text-[12px] font-medium text-accent underline underline-offset-2"
+            className="text-xs font-medium text-accent underline underline-offset-2"
           >
             Add service
           </button>
         ) : (
-          <span className="text-[11.5px] text-muted-foreground">Maximum {SERVICE_CAP}</span>
+          <span className="text-2xs text-fg-subtle">Maximum {SERVICE_CAP}</span>
         )}
 
         <div className="flex items-center gap-1">
           <Button
             size="xs"
-            disabled={saving}
+            loading={saving}
             onClick={() => onSave(draft.filter((s) => s.name.trim()))}
           >
-            {saving ? <Spinner className="h-3 w-3" /> : 'Save'}
+            Save
           </Button>
           <Button variant="ghost" size="xs" onClick={onCancel}>
             Cancel
@@ -513,9 +610,9 @@ function ServicesEditor({
         </div>
       </div>
 
-      <p className="text-[11.5px] leading-snug text-muted-foreground">
-        A blank price is fine — documents will say &ldquo;quote/assessment required&rdquo; rather
-        than inventing a number.
+      <p className="text-2xs leading-relaxed text-fg-subtle">
+        A blank price is fine — documents say &ldquo;quote required&rdquo; rather than inventing a
+        number.
       </p>
     </div>
   );

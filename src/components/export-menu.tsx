@@ -10,9 +10,9 @@
  */
 import * as React from 'react';
 import { Check, Download, Layers } from 'lucide-react';
-import { awarenessShort } from '@/lib/awareness';
+import { awarenessShort, stageTone } from '@/lib/awareness';
 import type { RunState } from '@/lib/types';
-import { Button } from '@/components/ui/primitives';
+import { Button, Divider, Eyebrow } from '@/components/ui/primitives';
 import { cn } from '@/lib/utils';
 
 type ExportFormat = 'pdf' | 'xlsx';
@@ -29,6 +29,9 @@ const FORMATS: { key: ExportFormat; label: string; code: string }[] = [
 type Matrix = Record<string, Record<ExportFormat, boolean>>;
 
 const ALL_ON: Record<ExportFormat, boolean> = { pdf: true, xlsx: true };
+
+/** Spectral marker per scenario, matching the results tabs. */
+const TONE = ['', 'bg-stage-1', 'bg-stage-2', 'bg-stage-3', 'bg-stage-4'] as const;
 
 export function ExportMenu({ state }: { state: RunState }) {
   const ready = React.useMemo(
@@ -108,15 +111,15 @@ export function ExportMenu({ state }: { state: RunState }) {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden="true" />
 
-          <div className="absolute right-0 top-full z-50 mt-2 w-[23rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-popover p-2 shadow-xl animate-slide-down">
+          <div className="panel-float absolute right-0 top-full z-popover mt-2 w-[23rem] max-w-[calc(100vw-2rem)] overflow-hidden p-2 animate-slide-down">
             <div className="flex items-baseline justify-between gap-2 px-1.5 pb-1.5 pt-0.5">
-              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <p className="eyebrow">
                 Choose what to include
               </p>
               <button
                 type="button"
                 onClick={selectAll}
-                className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                className="text-xs text-fg-subtle underline underline-offset-2 transition-colors hover:text-fg"
               >
                 Select all
               </button>
@@ -131,7 +134,7 @@ export function ExportMenu({ state }: { state: RunState }) {
                   type="button"
                   onClick={() => toggleColumn(f.key)}
                   title={`Toggle ${f.label} for every scenario`}
-                  className="w-[60px] text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+                  className="w-[60px] rounded-sm py-0.5 text-2xs font-semibold uppercase tracking-[0.09em] text-fg-subtle transition-colors hover:text-fg"
                 >
                   {f.label}
                 </button>
@@ -142,17 +145,18 @@ export function ExportMenu({ state }: { state: RunState }) {
               {ready.map((doc) => (
                 <div
                   key={doc.id}
-                  className="flex items-center gap-1 rounded-lg px-1.5 py-1 hover:bg-secondary/50"
+                  className="flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors duration-fast hover:bg-surface-2"
                 >
                   <button
                     type="button"
                     onClick={() => toggleRow(doc.id)}
                     title="Toggle every format for this scenario"
-                    className="min-w-0 flex-1 truncate text-left text-[12.5px] font-medium hover:underline"
+                    className="flex min-w-0 flex-1 items-center gap-2 truncate rounded-sm text-left text-sm font-medium text-fg hover:underline"
                   >
+                    <span className={cn("size-1.5 shrink-0 rounded-full", TONE[stageTone(doc.scenario)])} />
                     {awarenessShort(doc.scenario)}
                     {multiService && (
-                      <span className="ml-1 font-normal text-muted-foreground">
+                      <span className="ml-1 font-normal text-fg-muted">
                         {doc.serviceName}
                       </span>
                     )}
@@ -168,13 +172,13 @@ export function ExportMenu({ state }: { state: RunState }) {
                         aria-label={`${f.label} for ${doc.awarenessLabel}`}
                         onClick={() => toggleCell(doc.id, f.key)}
                         className={cn(
-                          'h-7 w-[60px] rounded-md border text-[10.5px] font-semibold uppercase tracking-wide transition-all',
+                          'h-7 w-[60px] rounded-sm border text-2xs font-semibold uppercase tracking-wide transition-all duration-fast ease-snap',
                           on
-                            ? 'border-stated/45 bg-stated/15 text-stated'
-                            : 'border-border text-muted-foreground/50 hover:border-muted-foreground/40 hover:text-muted-foreground',
+                            ? 'border-positive/45 bg-positive/12 text-positive'
+                            : 'border-line text-fg-subtle/60 hover:border-line-strong hover:text-fg-muted',
                         )}
                       >
-                        {on ? <Check className="mx-auto h-3.5 w-3.5 stroke-[3]" /> : f.label}
+                        {on ? <Check className="mx-auto size-3.5 stroke-[3]" /> : f.label}
                       </button>
                     );
                   })}
@@ -182,7 +186,7 @@ export function ExportMenu({ state }: { state: RunState }) {
               ))}
             </div>
 
-            <div className="mt-2 space-y-1 border-t border-border pt-2">
+            <div className="mt-2 space-y-1 border-t border-line pt-2">
               <a
                 href={selectedCount ? zipHref : undefined}
                 onClick={(event) => {
@@ -193,15 +197,15 @@ export function ExportMenu({ state }: { state: RunState }) {
                 className={cn(
                   'flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 transition-colors',
                   selectedCount
-                    ? 'bg-accent text-accent-foreground hover:bg-accent/90'
-                    : 'pointer-events-none bg-secondary text-muted-foreground opacity-60',
+                    ? 'bg-accent text-accent-foreground hover:brightness-110'
+                    : 'pointer-events-none bg-surface-3 text-fg-subtle opacity-60',
                 )}
               >
-                <span className="flex items-center gap-2 text-[13px] font-medium">
-                  <Download className="h-4 w-4" />
+                <span className="flex items-center gap-2 text-base font-medium">
+                  <Download className="size-4" />
                   Download ZIP
                 </span>
-                <span className="text-[11.5px] tabular-nums">
+                <span className="mono text-xs tabular">
                   {selectedCount} file{selectedCount === 1 ? '' : 's'}
                 </span>
               </a>
@@ -209,12 +213,12 @@ export function ExportMenu({ state }: { state: RunState }) {
               <a
                 href={`${base}&format=map-docx`}
                 onClick={() => setOpen(false)}
-                className="flex items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors hover:bg-secondary"
+                className="flex items-start gap-2.5 rounded-md px-2.5 py-2 transition-colors duration-fast hover:bg-surface-2"
               >
-                <Layers className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                <Layers className="mt-0.5 size-4 shrink-0 text-fg-muted" />
                 <span className="min-w-0">
-                  <span className="block text-[13px] font-medium">Awareness map (DOCX)</span>
-                  <span className="block text-[11.5px] leading-snug text-muted-foreground">
+                  <span className="block text-base font-medium text-fg">Awareness map (DOCX)</span>
+                  <span className="block text-xs leading-snug text-fg-muted">
                     Cover, comparison table, every scenario as a chapter
                   </span>
                 </span>

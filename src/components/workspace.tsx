@@ -1,19 +1,23 @@
 'use client';
 
 /**
- * The workspace: chat on the left, live brief on the right, results below once
- * documents exist. Owns the SSE lifecycles and the run state.
+ * The workspace shell.
+ *
+ * Chat, results and brief are independently resizable panes whose widths persist
+ * per run. The brief can be undocked into a floating panel that drags and
+ * resizes from any edge. Owns the SSE lifecycles and the run state.
  */
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FolderClock, Gauge, MessageSquare, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
+import { FolderClock, Gauge, GripHorizontal, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
 import { Brand } from '@/components/brand';
 import { BriefPanel } from '@/components/brief-panel';
 import { ChatPanel, type ThreadMessage } from '@/components/chat-panel';
 import { ResultsView, type LiveDoc } from '@/components/results-view';
 import { ThemeToggle } from '@/components/theme-provider';
-import { Button, Spinner } from '@/components/ui/primitives';
+import { Button, Divider, Hint, ProgressTrack, Segmented, Spinner } from '@/components/ui/primitives';
+import { ResizeHandles, SplitHandle, useFloating, useSplit } from '@/components/ui/panels';
 import { DEFAULT_SCENARIOS } from '@/lib/awareness';
 import { readSse } from '@/lib/sse-client';
 import type { AwarenessKey, SlotKey } from '@/lib/slots';
@@ -39,8 +43,6 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
   const [markdownById, setMarkdownById] = React.useState<Record<string, string>>({});
   const [generating, setGenerating] = React.useState(false);
 
-  const [panelOpen, setPanelOpen] = React.useState(true);
-  const [view, setView] = React.useState<'chat' | 'results'>('chat');
 
   const chatAbort = React.useRef<AbortController | null>(null);
   const generateAbort = React.useRef<AbortController | null>(null);
@@ -151,7 +153,6 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
     generateAbort.current = controller;
 
     setGenerating(true);
-    setView('results');
 
     try {
       await readSse<GenerateEvent>(
@@ -313,189 +314,358 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
     router.push(`/r/${id}`);
   }
 
+  // ---- layout -------------------------------------------------------------
   const hasResults = state.documents.length > 0 || Object.keys(live).length > 0;
 
+  // Two independent, persisted splits. The brief keeps its width whether or not
+  // results exist, so the layout does not lurch when generation finishes.
+  const chatSplit = useSplit({
+    id: `${runId}:chat`,
+    initial: 520,
+    min: 380,
+    max: 860,
+    side: 'right',
+    snap: [440, 520, 640],
+    enabled: hasResults,
+  });
+
+  const briefSplit = useSplit({
+    id: 'brief',
+    initial: 320,
+    min: 268,
+    max: 460,
+    side: 'left',
+    snap: [288, 320, 380],
+  });
+
+  const [briefDocked, setBriefDocked] = React.useState(true);
+  const [briefOpen, setBriefOpen] = React.useState(true);
+  const [mobileView, setMobileView] = React.useState<'chat' | 'results' | 'brief'>('chat');
+
+  React.useEffect(() => {
+    setBriefDocked(readLocal('brief:docked', true));
+  }, []);
+
+  const dock = (next: boolean) => {
+    setBriefDocked(next);
+    writeLocal('brief:docked', next);
+  };
+
+  React.useEffect(() => {
+    if (hasResults && mobileView === 'chat') setMobileView('results');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasResults]);
+
+  const brief = (
+    <BriefPanel
+      state={state}
+      onEdit={editSlot}
+      onBuild={() => void startGeneration(DEFAULT_SCENARIOS)}
+      busy={generating}
+      docked={briefDocked}
+      onDock={dock}
+    />
+  );
+
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-background">
-      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-4 sm:px-5">
-        <div className="flex min-w-0 items-center gap-3">
-          <Brand />
-          <span className="hidden truncate text-sm text-muted-foreground sm:block">
-            {state.title !== 'Untitled ICP' ? `· ${state.title}` : ''}
-          </span>
-        </div>
+    <div className="atmosphere flex h-dvh flex-col overflow-hidden bg-bg text-fg">
+      <TopBar
+        state={state}
+        generating={generating}
+        onNew={newRun}
+        briefOpen={briefOpen && briefDocked}
+        onToggleBrief={() => (briefDocked ? setBriefOpen((v) => !v) : dock(true))}
+        hasResults={hasResults}
+        mobileView={mobileView}
+        onMobileView={setMobileView}
+      />
 
-        <div className="flex shrink-0 items-center gap-1">
-          {hasResults && (
-            <div className="mr-1 flex items-center gap-1 rounded-lg bg-secondary/70 p-0.5 lg:hidden">
-              <button
-                type="button"
-                onClick={() => setView('chat')}
-                className={cn(
-                  'rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors',
-                  view === 'chat' ? 'bg-card shadow-sm' : 'text-muted-foreground',
-                )}
-              >
-                Chat
-              </button>
-              <button
-                type="button"
-                onClick={() => setView('results')}
-                className={cn(
-                  'rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors',
-                  view === 'results' ? 'bg-card shadow-sm' : 'text-muted-foreground',
-                )}
-              >
-                Profiles
-              </button>
-            </div>
-          )}
-
-          <Button variant="ghost" size="icon-sm" asChild title="Saved runs">
-            <Link href="/runs">
-              <FolderClock />
-            </Link>
-          </Button>
-          <Button variant="ghost" size="icon-sm" asChild title="Admin — usage and history">
-            <Link href="/admin">
-              <Gauge />
-            </Link>
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={newRun} title="New ICP">
-            <Plus />
-          </Button>
-          <ThemeToggle />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="hidden md:inline-flex"
-            onClick={() => setPanelOpen((v) => !v)}
-            title={panelOpen ? 'Hide brief' : 'Show brief'}
-          >
-            {panelOpen ? <PanelRightClose /> : <PanelRightOpen />}
-          </Button>
-        </div>
-      </header>
-
-      <div className="flex min-h-0 flex-1">
-        <main className="flex min-w-0 flex-1 flex-col">
-          {hasResults ? (
-            <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-              <div
-                className={cn(
-                  'flex min-h-0 flex-col border-border lg:w-[42%] lg:max-w-xl lg:border-r',
-                  view === 'chat' ? 'flex-1' : 'hidden lg:flex',
-                )}
-              >
-                <ChatPanel
-                  messages={messages}
-                  streaming={streaming}
-                  busy={chatBusy}
-                  notice={notice}
-                  onSend={(text) => void sendTurn(text)}
-                  onStop={() => chatAbort.current?.abort()}
-                />
-              </div>
-
-              <div
-                className={cn(
-                  'min-h-0 flex-1',
-                  view === 'results' ? 'flex flex-col' : 'hidden lg:flex lg:flex-col',
-                )}
-              >
-                <ResultsView
-                  state={state}
-                  live={live}
-                  markdownById={markdownById}
-                  generating={generating}
-                  onLoadDocument={loadDocument}
-                  onRegenerate={(scenario, serviceIndex) =>
-                    void startGeneration([scenario], true, [serviceIndex])
-                  }
-                />
-              </div>
-            </div>
-          ) : (
-            <ChatPanel
-              messages={messages}
-              streaming={streaming}
-              busy={chatBusy}
-              notice={notice}
-              onSend={(text) => void sendTurn(text)}
-              onStop={() => chatAbort.current?.abort()}
-            />
-          )}
-        </main>
-
+      <div className="relative flex min-h-0 flex-1">
+        {/* ---- chat ------------------------------------------------------- */}
         <div
+          ref={chatSplit.panelRef}
+          style={hasResults ? { width: chatSplit.size } : undefined}
           className={cn(
-            'w-[19rem] shrink-0 transition-[width] duration-200',
-            panelOpen ? 'hidden md:block' : 'hidden',
+            'min-h-0 min-w-0 flex-col',
+            hasResults ? 'shrink-0' : 'flex-1',
+            hasResults && mobileView !== 'chat' ? 'hidden lg:flex' : 'flex',
+            !chatSplit.dragging && 'transition-[width] duration-base ease-out',
           )}
         >
-          <BriefPanel
-            state={state}
-            onEdit={editSlot}
-            onBuild={() => void startGeneration(DEFAULT_SCENARIOS)}
-            busy={generating}
+          <ChatPanel
+            messages={messages}
+            streaming={streaming}
+            busy={chatBusy}
+            notice={notice}
+            onDismissNotice={() => setNotice(null)}
+            onSend={(text) => void sendTurn(text)}
+            onStop={() => chatAbort.current?.abort()}
+            compact={hasResults}
           />
+        </div>
+
+        {hasResults && (
+          <SplitHandle
+            {...chatSplit.handleProps}
+            dragging={chatSplit.dragging}
+            label="Resize the conversation"
+            className="hidden lg:block"
+          />
+        )}
+
+        {/* ---- results ----------------------------------------------------- */}
+        {hasResults && (
+          <div
+            className={cn(
+              'min-h-0 min-w-0 flex-1 flex-col',
+              mobileView === 'results' ? 'flex' : 'hidden lg:flex',
+            )}
+          >
+            <ResultsView
+              state={state}
+              live={live}
+              markdownById={markdownById}
+              generating={generating}
+              onLoadDocument={loadDocument}
+              onRegenerate={(scenario, serviceIndex) =>
+                void startGeneration([scenario], true, [serviceIndex])
+              }
+            />
+          </div>
+        )}
+
+        {/* ---- brief, docked ------------------------------------------------ */}
+        {briefDocked && briefOpen && (
+          <>
+            <SplitHandle
+              {...briefSplit.handleProps}
+              dragging={briefSplit.dragging}
+              label="Resize the brief"
+              className="hidden md:block"
+            />
+            <div
+              ref={briefSplit.panelRef}
+              style={{ width: briefSplit.size }}
+              className={cn(
+                'hidden shrink-0 md:flex',
+                !briefSplit.dragging && 'transition-[width] duration-base ease-out',
+              )}
+            >
+              {brief}
+            </div>
+          </>
+        )}
+
+        {/* ---- brief, floating ---------------------------------------------- */}
+        {briefDocked ? null : <FloatingBrief onDock={() => dock(true)}>{brief}</FloatingBrief>}
+
+        {/* Mobile gets the brief as a full surface, not a cramped sheet. */}
+        <div className={cn('min-h-0 flex-1 md:hidden', mobileView === 'brief' ? 'flex' : 'hidden')}>
+          {brief}
         </div>
       </div>
 
-      {/* Mobile: the brief lives behind a collapsible bar. */}
-      <MobileBrief
-        state={state}
-        onEdit={editSlot}
-        onBuild={() => void startGeneration(DEFAULT_SCENARIOS)}
-        busy={generating}
-      />
-
-      {generating && (
-        <div className="pointer-events-none fixed bottom-4 left-1/2 z-40 -translate-x-1/2 md:hidden">
-          <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3.5 py-2 shadow-lg">
-            <Spinner className="h-3.5 w-3.5" />
-            <span className="text-[12.5px] font-medium">Building profiles…</span>
-          </div>
-        </div>
-      )}
+      {generating && <GeneratingToast count={Object.keys(live).length} />}
     </div>
   );
 }
 
-function MobileBrief({
+// ---------------------------------------------------------------------------
+// Shell chrome
+// ---------------------------------------------------------------------------
+
+function TopBar({
   state,
-  onEdit,
-  onBuild,
-  busy,
+  generating,
+  onNew,
+  briefOpen,
+  onToggleBrief,
+  hasResults,
+  mobileView,
+  onMobileView,
 }: {
   state: RunState;
-  onEdit: (key: SlotKey, value: unknown) => Promise<void>;
-  onBuild: () => void;
-  busy: boolean;
+  generating: boolean;
+  onNew: () => void;
+  briefOpen: boolean;
+  onToggleBrief: () => void;
+  hasResults: boolean;
+  mobileView: 'chat' | 'results' | 'brief';
+  onMobileView: (view: 'chat' | 'results' | 'brief') => void;
 }) {
-  const [open, setOpen] = React.useState(false);
+  const titled = state.title !== 'Untitled ICP';
 
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-11 shrink-0 items-center justify-center gap-2 border-t border-border bg-surface text-[13px] font-medium text-muted-foreground md:hidden"
-      >
-        <MessageSquare className="h-3.5 w-3.5" />
-        {open ? 'Hide the brief' : 'Show the brief'}
-      </button>
+    <header className="chrome relative z-chrome flex h-topbar shrink-0 items-center gap-3 border-b border-line px-3 sm:px-4">
+      <Brand />
 
-      {open && (
-        <div className="h-[55dvh] shrink-0 md:hidden">
-          <BriefPanel
-            state={state}
-            onEdit={onEdit}
-            onBuild={onBuild}
-            busy={busy}
-          />
+      {titled ? (
+        <>
+          <Divider orientation="vertical" className="my-3 hidden sm:block" />
+          <p className="hidden min-w-0 flex-1 truncate text-base text-fg-muted sm:block">
+            {state.title}
+          </p>
+        </>
+      ) : (
+        <span className="flex-1" />
+      )}
+
+      {/* Indeterminate by design — generation length genuinely cannot be known. */}
+      {generating && (
+        <div className="hidden items-center gap-2.5 sm:flex">
+          <ProgressTrack className="w-20" />
+          <span className="text-xs text-fg-muted">Building</span>
         </div>
       )}
-    </>
+
+      <div className="flex shrink-0 items-center gap-0.5">
+        {hasResults && (
+          <Segmented
+            size="sm"
+            className="mr-1 lg:hidden"
+            value={mobileView}
+            onChange={onMobileView}
+            options={[
+              { value: 'chat', label: 'Chat' },
+              { value: 'results', label: 'Profiles' },
+              { value: 'brief', label: 'Brief' },
+            ]}
+          />
+        )}
+
+        <Hint label="Saved ICPs">
+          <Button variant="ghost" size="icon-sm" asChild>
+            <Link href="/runs" aria-label="Saved ICPs">
+              <FolderClock />
+            </Link>
+          </Button>
+        </Hint>
+
+        <Hint label="Usage and history">
+          <Button variant="ghost" size="icon-sm" asChild>
+            <Link href="/admin" aria-label="Admin">
+              <Gauge />
+            </Link>
+          </Button>
+        </Hint>
+
+        <Hint label="Start a new ICP">
+          <Button variant="ghost" size="icon-sm" onClick={onNew} aria-label="New ICP">
+            <Plus />
+          </Button>
+        </Hint>
+
+        <ThemeToggle />
+
+        <Hint label={briefOpen ? 'Hide the brief' : 'Show the brief'}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="hidden md:inline-flex"
+            onClick={onToggleBrief}
+            aria-label={briefOpen ? 'Hide the brief' : 'Show the brief'}
+          >
+            {briefOpen ? <PanelRightClose /> : <PanelRightOpen />}
+          </Button>
+        </Hint>
+      </div>
+    </header>
   );
+}
+
+/**
+ * The brief, detached. Dragged by its header, resized from any edge or corner,
+ * constrained so it can never be lost off-screen, and raised above its siblings
+ * the moment it is touched.
+ */
+function FloatingBrief({ children, onDock }: { children: React.ReactNode; onDock: () => void }) {
+  const float = useFloating({
+    id: 'brief:float',
+    initial: {
+      x: typeof window === 'undefined' ? 900 : Math.max(24, window.innerWidth - 392),
+      y: 76,
+      w: 344,
+      h: 560,
+    },
+    minW: 280,
+    minH: 260,
+  });
+
+  return (
+    <div
+      ref={float.ref}
+      onPointerDownCapture={float.raise}
+      style={{
+        transform: `translate3d(${float.rect.x}px, ${float.rect.y}px, 0)`,
+        width: float.rect.w,
+        height: float.rect.h,
+        zIndex: float.z,
+      }}
+      className={cn(
+        'panel-float gpu fixed left-0 top-0 hidden flex-col overflow-hidden md:flex',
+        float.busy ? 'select-none' : 'transition-shadow duration-base ease-out',
+      )}
+      role="dialog"
+      aria-label="Brief"
+    >
+      <div
+        onPointerDown={float.onMovePointerDown}
+        className={cn(
+          'flex h-9 shrink-0 items-center gap-2 border-b border-line bg-surface-2 px-2.5',
+          float.busy === 'move' ? 'cursor-grabbing' : 'cursor-grab',
+        )}
+      >
+        <GripHorizontal className="size-3.5 shrink-0 text-fg-subtle" />
+        <span className="eyebrow flex-1">Brief</span>
+        <Hint label="Dock to the side">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={onDock}
+            data-no-drag
+            aria-label="Dock the brief"
+          >
+            <PanelRightClose />
+          </Button>
+        </Hint>
+      </div>
+
+      <div className="min-h-0 flex-1">{children}</div>
+
+      <ResizeHandles handleProps={float.resizeHandleProps} />
+    </div>
+  );
+}
+
+function GeneratingToast({ count }: { count: number }) {
+  return (
+    <div className="pointer-events-none fixed bottom-5 left-1/2 z-float -translate-x-1/2 animate-rise sm:hidden">
+      <div className="panel-raised flex items-center gap-2.5 rounded-full px-4 py-2">
+        <Spinner className="size-3.5 text-accent" />
+        <span className="text-sm font-medium">
+          Building {count || 4} profile{count === 1 ? '' : 's'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function readLocal<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(`prism:${key}`);
+    return raw === null ? fallback : (JSON.parse(raw) as T);
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLocal(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(`prism:${key}`, JSON.stringify(value));
+  } catch {
+    /* private mode or quota — an unsaved preference is not worth an error */
+  }
 }

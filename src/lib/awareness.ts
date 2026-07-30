@@ -27,6 +27,15 @@ export interface AwarenessScenario {
   calibration: string;
   /** Display order across tabs and the comparison table. */
   order: number;
+  /**
+   * Position on the spectral ramp, 1-4, cold to warm.
+   *
+   * This is the product's own idea made visible: a prism splits one beam into
+   * a spectrum, and the four stages ARE that spectrum. Used as a 2px marker
+   * and a tab underline only — never as a fill. Most Aware shares stage 4 with
+   * Product/Service-Aware because it sits at the same warm end.
+   */
+  tone: 1 | 2 | 3 | 4;
 }
 
 export const AWARENESS: Record<AwarenessKey, AwarenessScenario> = {
@@ -38,6 +47,7 @@ export const AWARENESS: Record<AwarenessKey, AwarenessScenario> = {
     short: 'Unaware',
     calibration: "They don't label the problem; lead with symptoms and “aha” patterns.",
     order: 1,
+    tone: 1,
   },
   problem_aware: {
     key: 'problem_aware',
@@ -47,6 +57,7 @@ export const AWARENESS: Record<AwarenessKey, AwarenessScenario> = {
     short: 'Problem-Aware',
     calibration: 'They admit symptoms; unsure of solutions.',
     order: 2,
+    tone: 2,
   },
   solution_aware: {
     key: 'solution_aware',
@@ -56,6 +67,7 @@ export const AWARENESS: Record<AwarenessKey, AwarenessScenario> = {
     short: 'Solution-Aware',
     calibration: 'They know solution categories; not sure which product or provider.',
     order: 3,
+    tone: 3,
   },
   product_aware: {
     key: 'product_aware',
@@ -65,6 +77,7 @@ export const AWARENESS: Record<AwarenessKey, AwarenessScenario> = {
     short: 'Product-Aware',
     calibration: 'They know this offer; comparing providers.',
     order: 4,
+    tone: 4,
   },
   most_aware: {
     key: 'most_aware',
@@ -74,6 +87,7 @@ export const AWARENESS: Record<AwarenessKey, AwarenessScenario> = {
     short: 'Most-Aware',
     calibration: 'Ready to buy; remove last uncertainty — risk, timeline, inclusions, aftercare, terms.',
     order: 5,
+    tone: 4,
   },
 };
 
@@ -107,6 +121,11 @@ export const ALL_AWARENESS_KEYS: AwarenessKey[] = [
 
 export function awarenessLabel(key: AwarenessKey): string {
   return AWARENESS[key]?.label ?? key;
+}
+
+/** Tailwind class fragment for a stage's spectral hue, e.g. 'stage-2'. */
+export function stageTone(key: AwarenessKey): 1 | 2 | 3 | 4 {
+  return AWARENESS[key]?.tone ?? 1;
 }
 
 export function awarenessShort(key: AwarenessKey): string {

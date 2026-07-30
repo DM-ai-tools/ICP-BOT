@@ -48,8 +48,8 @@ export function AudienceModeToggle({ initial }: { initial: AudienceMode }) {
   return (
     <section className="mt-9">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-[15px] font-semibold tracking-tight">Who&rsquo;s using it</h2>
-        <p className="text-[12px] text-muted-foreground">
+        <h2 className="text-md font-semibold tracking-tight">Who&rsquo;s using it</h2>
+        <p className="text-sm text-fg-muted">
           Applies to every conversation, from the next message
         </p>
       </div>
@@ -64,23 +64,23 @@ export function AudienceModeToggle({ initial }: { initial: AudienceMode }) {
               onClick={() => void choose(option.key)}
               aria-pressed={active}
               className={cn(
-                'rounded-xl border-2 p-4 text-left transition-all duration-150 focus-ring',
+                'rounded-xl border-2 p-4 text-left transition-all duration-fast focus-visible:ring-2 focus-visible:ring-ring/70',
                 active
-                  ? 'border-accent/60 bg-accent/[0.06] shadow-sm'
-                  : 'border-border bg-card hover:border-muted-foreground/35',
+                  ? 'border-accent/60 bg-accent/[0.06] shadow-e1'
+                  : 'border-line bg-surface-1 hover:border-line-strong',
               )}
             >
               <span className="flex items-center justify-between gap-2">
-                <span className="text-[15px] font-semibold text-foreground">{option.label}</span>
+                <span className="text-md font-semibold text-fg">{option.label}</span>
                 {saving === option.key ? (
-                  <Spinner className="h-4 w-4 text-accent" />
+                  <Spinner className="size-4 text-accent" />
                 ) : active ? (
-                  <span className="grid h-5 w-5 place-items-center rounded-full bg-accent text-accent-foreground">
-                    <Check className="h-3 w-3 stroke-[3]" />
+                  <span className="grid size-5 place-items-center rounded-full bg-accent text-accent-foreground">
+                    <Check className="size-3 stroke-[3]" />
                   </span>
                 ) : null}
               </span>
-              <span className="mt-1.5 block text-[13px] leading-relaxed text-muted-foreground text-pretty">
+              <span className="mt-1.5 block text-base leading-relaxed text-fg-muted text-pretty">
                 {option.blurb}
               </span>
             </button>
@@ -88,7 +88,7 @@ export function AudienceModeToggle({ initial }: { initial: AudienceMode }) {
         })}
       </div>
 
-      {error && <p className="mt-2 text-[12.5px] text-destructive">{error}</p>}
+      {error && <p className="mt-2 text-sm text-critical">{error}</p>}
     </section>
   );
 }

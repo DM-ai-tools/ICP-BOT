@@ -95,8 +95,8 @@ export default async function AdminPage() {
   const maxKindCost = Math.max(...byKind.map((k) => k._sum.costUsd ?? 0), 0.0001);
 
   return (
-    <div className="min-h-dvh bg-background">
-      <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-3 border-b border-border bg-background/85 px-4 backdrop-blur sm:px-6">
+    <div className="atmosphere min-h-dvh bg-bg">
+      <header className="chrome sticky top-0 z-chrome flex h-topbar items-center justify-between gap-3 border-b border-line px-4 sm:px-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon-sm" asChild>
             <Link href="/" aria-label="Back">
@@ -104,7 +104,7 @@ export default async function AdminPage() {
             </Link>
           </Button>
           <Brand href={null} />
-          <span className="hidden text-sm text-muted-foreground sm:inline">· Admin</span>
+          <span className="hidden text-sm text-fg-muted sm:inline">· Admin</span>
         </div>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" asChild>
@@ -172,7 +172,7 @@ export default async function AdminPage() {
                     ? Math.round((k._sum.durationMs ?? 0) / k._count._all)
                     : 0;
                   return (
-                    <tr key={k.kind} className="border-b border-border/50 last:border-0">
+                    <tr key={k.kind} className="border-b border-line/50 last:border-0">
                       <Td>{KIND_LABEL[k.kind] ?? k.kind}</Td>
                       <Td right mono>{num(k._count._all)}</Td>
                       <Td right mono muted>{num(k._sum.promptTokens ?? 0)}</Td>
@@ -180,7 +180,7 @@ export default async function AdminPage() {
                       <Td right mono muted>{avgMs ? `${(avgMs / 1000).toFixed(1)}s` : '—'}</Td>
                       <Td right mono>{usd(cost)}</Td>
                       <Td>
-                        <span className="block h-1.5 w-24 overflow-hidden rounded-full bg-secondary">
+                        <span className="block h-1.5 w-24 overflow-hidden rounded-full bg-surface-3">
                           <span
                             className="block h-full rounded-full bg-accent"
                             style={{ width: `${Math.max(3, (cost / maxKindCost) * 100)}%` }}
@@ -202,9 +202,9 @@ export default async function AdminPage() {
               align={['left', 'right', 'right', 'right', 'right']}
             >
               {byModel.map((m) => (
-                <tr key={m.model} className="border-b border-border/50 last:border-0">
+                <tr key={m.model} className="border-b border-line/50 last:border-0">
                   <Td>
-                    <code className="rounded bg-secondary px-1.5 py-0.5 text-[12px]">{m.model}</code>
+                    <code className="rounded bg-surface-3 px-1.5 py-0.5 text-sm">{m.model}</code>
                   </Td>
                   <Td right mono>{num(m._count._all)}</Td>
                   <Td right mono muted>{num(m._sum.promptTokens ?? 0)}</Td>
@@ -213,7 +213,7 @@ export default async function AdminPage() {
                 </tr>
               ))}
             </Table>
-            <p className="mt-2.5 text-[12px] leading-relaxed text-muted-foreground">
+            <p className="mt-2.5 text-sm leading-relaxed text-fg-muted">
               Cost is computed from the per-million rates in <code>OPENAI_PRICE_*</code>. It is an
               estimate for tracking, not a billing record — reconcile against your OpenAI dashboard.
             </p>
@@ -235,12 +235,12 @@ export default async function AdminPage() {
                   (d) => d.status === 'complete' || d.status === 'repaired',
                 ).length;
                 return (
-                  <tr key={run.id} className="border-b border-border/50 last:border-0">
+                  <tr key={run.id} className="border-b border-line/50 last:border-0">
                     <Td>
                       <Link href={`/r/${run.id}`} className="font-medium hover:underline">
                         {run.title}
                       </Link>
-                      <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
+                      <span className="mt-0.5 block text-xs text-fg-muted">
                         {[slots.industry, slots.region].filter(Boolean).join(' · ') ||
                           'brief in progress'}
                       </span>
@@ -252,7 +252,7 @@ export default async function AdminPage() {
                           {done}/{run.documents.length}
                         </span>
                       ) : (
-                        <span className="text-muted-foreground">—</span>
+                        <span className="text-fg-muted">—</span>
                       )}
                     </Td>
                     <Td right mono muted>{num(run.promptTokens + run.completionTokens)}</Td>
@@ -262,10 +262,10 @@ export default async function AdminPage() {
                       {run.documents.length > 0 && (
                         <a
                           href={`/api/export?runId=${run.id}&format=zip`}
-                          className="inline-flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
+                          className="inline-flex items-center gap-1 text-sm text-fg-muted hover:text-fg"
                           title="Download everything as a zip"
                         >
-                          <Download className="h-3.5 w-3.5" />
+                          <Download className="size-3.5" />
                         </a>
                       )}
                     </Td>
@@ -290,12 +290,12 @@ export default async function AdminPage() {
                   ? markdownToPlainText(doc.markdown).split(/\s+/).filter(Boolean).length
                   : 0;
                 return (
-                  <tr key={doc.id} className="border-b border-border/50 last:border-0">
+                  <tr key={doc.id} className="border-b border-line/50 last:border-0">
                     <Td>
                       <Link href={`/r/${doc.runId}`} className="font-medium hover:underline">
                         {doc.run.title}
                       </Link>
-                      <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
+                      <span className="mt-0.5 block text-xs text-fg-muted">
                         {doc.serviceName}
                       </span>
                     </Td>
@@ -304,14 +304,14 @@ export default async function AdminPage() {
                       <Badge
                         tone={
                           doc.status === 'stale'
-                            ? 'warn'
+                            ? 'caution'
                             : doc.badge === 'complete'
-                              ? 'stated'
+                              ? 'positive'
                               : doc.badge === 'repaired'
-                                ? 'warn'
+                                ? 'caution'
                                 : doc.badge === 'failed'
-                                  ? 'danger'
-                                  : 'missing'
+                                  ? 'critical'
+                                  : 'neutral'
                         }
                       >
                         {doc.status === 'stale' ? 'brief changed' : (doc.badge ?? doc.status)}
@@ -327,14 +327,14 @@ export default async function AdminPage() {
                             <a
                               key={fmt}
                               href={`/api/export?runId=${doc.runId}&documentId=${doc.id}&format=${fmt}`}
-                              className="rounded border border-border px-1.5 py-0.5 text-[10.5px] font-medium uppercase text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                              className="rounded border border-line px-1.5 py-0.5 text-2xs font-medium uppercase text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg"
                             >
                               {fmt}
                             </a>
                           ))}
                         </span>
                       ) : (
-                        <span className="text-[12px] text-muted-foreground">—</span>
+                        <span className="text-sm text-fg-muted">—</span>
                       )}
                     </Td>
                   </tr>
@@ -355,15 +355,15 @@ export default async function AdminPage() {
               align={['left', 'left', 'left', 'right', 'left']}
             >
               {failures.map((f) => (
-                <tr key={f.id} className="border-b border-border/50 last:border-0">
+                <tr key={f.id} className="border-b border-line/50 last:border-0">
                   <Td muted>{when(f.createdAt)}</Td>
                   <Td>{KIND_LABEL[f.kind] ?? f.kind}</Td>
                   <Td muted>
-                    <code className="text-[12px]">{f.model}</code>
+                    <code className="text-sm">{f.model}</code>
                   </Td>
                   <Td right mono muted>{f.attempts}</Td>
                   <Td>
-                    <span className="block max-w-md truncate text-[12px] text-destructive">
+                    <span className="block max-w-md truncate text-sm text-critical">
                       {f.detail ?? 'no detail recorded'}
                     </span>
                   </Td>
@@ -395,15 +395,15 @@ function Stat({
   return (
     <div
       className={cn(
-        'rounded-xl border border-border bg-card px-4 py-3.5',
+        'rounded-xl border border-line bg-surface-1 px-4 py-3.5',
         emphasis && 'border-accent/40 bg-accent/[0.05]',
       )}
     >
-      <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <p className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
         {label}
       </p>
       <p className="mt-1.5 text-2xl font-semibold tabular-nums tracking-tight">{value}</p>
-      {sub && <p className="mt-0.5 text-[11.5px] tabular-nums text-muted-foreground">{sub}</p>}
+      {sub && <p className="mt-0.5 text-xs tabular-nums text-fg-muted">{sub}</p>}
     </div>
   );
 }
@@ -420,8 +420,8 @@ function Section({
   return (
     <section className="mt-9">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
-        {hint && <p className="text-[12px] text-muted-foreground">{hint}</p>}
+        <h2 className="text-md font-semibold tracking-tight">{title}</h2>
+        {hint && <p className="text-sm text-fg-muted">{hint}</p>}
       </div>
       {children}
     </section>
@@ -438,15 +438,15 @@ function Table({
   children: React.ReactNode;
 }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full min-w-[640px] border-collapse text-[13.5px]">
+    <div className="overflow-x-auto rounded-xl border border-line">
+      <table className="w-full min-w-[640px] border-collapse text-base">
         <thead>
-          <tr className="bg-secondary/50">
+          <tr className="bg-surface-2">
             {head.map((h, i) => (
               <th
                 key={i}
                 className={cn(
-                  'border-b border-border px-3.5 py-2.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground',
+                  'border-b border-line px-3.5 py-2.5 text-2xs font-semibold uppercase tracking-wider text-fg-muted',
                   align[i] === 'right' ? 'text-right' : 'text-left',
                 )}
               >
@@ -478,7 +478,7 @@ function Td({
         'px-3.5 py-2.5 align-top',
         right && 'text-right',
         mono && 'tabular-nums',
-        muted && 'text-muted-foreground',
+        muted && 'text-fg-muted',
       )}
     >
       {children}
@@ -488,9 +488,9 @@ function Td({
 
 function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-dashed border-border px-6 py-10 text-center">
-      <FileText className="mx-auto h-6 w-6 text-muted-foreground/40" />
-      <p className="mt-2 text-[13.5px] text-muted-foreground">{children}</p>
+    <div className="rounded-xl border border-dashed border-line px-6 py-10 text-center">
+      <FileText className="mx-auto h-6 w-6 text-fg-muted/40" />
+      <p className="mt-2 text-base text-fg-muted">{children}</p>
     </div>
   );
 }

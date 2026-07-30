@@ -1,9 +1,12 @@
 'use client';
 
 /**
- * shadcn/ui-style primitives: Radix behaviour, CVA variants, Tailwind tokens.
- * Kept in one file because the set is small and the app reads better without
- * fifteen two-export modules.
+ * The component vocabulary.
+ *
+ * Every primitive consumes tokens and nothing else. Hover, focus-visible,
+ * active, disabled and loading are designed states here rather than
+ * afterthoughts bolted on at the call site — which is the difference between
+ * a set of components and a system.
  */
 import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
@@ -21,28 +24,42 @@ import { cn } from '@/lib/utils';
 // ---------------------------------------------------------------------------
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-all duration-150 focus-ring disabled:pointer-events-none disabled:opacity-45 active:scale-[0.985] [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
+  [
+    'relative inline-flex select-none items-center justify-center gap-2 whitespace-nowrap',
+    'font-medium transition-all duration-fast ease-snap',
+    'outline-none focus-visible:ring-2 focus-visible:ring-ring/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg',
+    'disabled:pointer-events-none disabled:opacity-40 disabled:saturate-50',
+    // A 1px press, not a scale. Scaling text on click looks cheap and blurs
+    // glyphs mid-transition.
+    'active:translate-y-px',
+    '[&_svg]:pointer-events-none [&_svg]:shrink-0',
+  ].join(' '),
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90',
-        accent: 'bg-accent text-accent-foreground shadow-sm hover:bg-accent/90',
-        outline: 'border border-border bg-card hover:bg-secondary hover:text-secondary-foreground',
-        secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/75',
-        ghost: 'hover:bg-secondary hover:text-secondary-foreground',
-        destructive: 'bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90',
-        link: 'text-primary underline-offset-4 hover:underline',
+        primary:
+          'bg-primary text-primary-foreground shadow-e1 hover:brightness-[1.08] active:brightness-95',
+        accent:
+          'bg-accent text-accent-foreground shadow-e1 hover:brightness-[1.08] active:brightness-95',
+        outline:
+          'border border-line bg-surface-1 text-fg shadow-e1 hover:border-line-strong hover:bg-surface-2',
+        subtle: 'bg-surface-3 text-fg-secondary hover:bg-surface-3/70 hover:text-fg',
+        ghost: 'text-fg-secondary hover:bg-surface-3 hover:text-fg',
+        danger:
+          'bg-critical text-white shadow-e1 hover:brightness-110 active:brightness-95',
+        link: 'text-accent underline-offset-4 hover:underline',
       },
       size: {
-        default: 'h-9 px-4 py-2',
-        sm: 'h-8 rounded-md px-3 text-[13px]',
-        xs: 'h-7 rounded-md px-2.5 text-xs [&_svg]:size-3.5',
-        lg: 'h-11 rounded-xl px-7 text-[15px]',
-        icon: 'h-9 w-9',
-        'icon-sm': 'h-7 w-7 rounded-md [&_svg]:size-3.5',
+        xs: 'h-6 gap-1.5 rounded-sm px-2 text-2xs [&_svg]:size-3',
+        sm: 'h-7.5 rounded-md px-2.5 text-sm [&_svg]:size-3.5',
+        md: 'h-9 rounded-md px-3.5 text-base [&_svg]:size-4',
+        lg: 'h-11 rounded-lg px-6 text-md [&_svg]:size-4',
+        icon: 'h-9 w-9 rounded-md [&_svg]:size-4',
+        'icon-sm': 'h-7 w-7 rounded-sm [&_svg]:size-3.5',
+        'icon-xs': 'h-6 w-6 rounded-sm [&_svg]:size-3',
       },
     },
-    defaultVariants: { variant: 'default', size: 'default' },
+    defaultVariants: { variant: 'primary', size: 'md' },
   },
 );
 
@@ -50,13 +67,46 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  /** Swaps the label for a spinner and blocks interaction, keeping width. */
+  loading?: boolean;
 }
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, asChild, loading, children, disabled, ...props }, ref) => {
     const Comp = asChild ? Slot : 'button';
+
+    if (asChild) {
+      return (
+        <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props}>
+          {children}
+        </Comp>
+      );
+    }
+
     return (
-      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
+      <button
+        ref={ref}
+        className={cn(buttonVariants({ variant, size, className }))}
+        disabled={disabled || loading}
+        data-loading={loading || undefined}
+        {...props}
+      >
+        {/* The label stays in flow but goes invisible, so the button cannot
+            change width the instant it starts working. */}
+        <span
+          className={cn(
+            'inline-flex items-center gap-2 transition-opacity duration-fast',
+            loading && 'opacity-0',
+          )}
+        >
+          {children}
+        </span>
+        {loading && (
+          <span className="absolute inset-0 grid place-items-center">
+            <Spinner className="size-4" />
+          </span>
+        )}
+      </button>
     );
   },
 );
@@ -78,7 +128,9 @@ export const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      'fixed inset-0 z-50 bg-background/70 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+      'fixed inset-0 z-overlay bg-bg/70 backdrop-blur-sm',
+      'data-[state=open]:animate-in data-[state=open]:fade-in-0',
+      'data-[state=closed]:animate-out data-[state=closed]:fade-out-0',
       className,
     )}
     {...props}
@@ -95,18 +147,18 @@ export const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        // Mobile: a sheet that can scroll. Desktop: a centred card.
-        'fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] overflow-y-auto rounded-t-2xl border border-border bg-card p-6 shadow-2xl duration-200',
-        'sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-full sm:max-w-2xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-8',
-        'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-bottom-4 data-[state=open]:slide-in-from-bottom-4 sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:slide-out-to-bottom-0 sm:data-[state=open]:slide-in-from-bottom-0',
+        'panel-float fixed inset-x-0 bottom-0 z-overlay max-h-[92dvh] overflow-y-auto rounded-b-none p-6',
+        'sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-full sm:max-w-2xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:p-8',
+        'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-bottom-4 sm:data-[state=open]:zoom-in-95 sm:data-[state=open]:slide-in-from-bottom-0',
+        'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-bottom-4 sm:data-[state=closed]:zoom-out-95',
         className,
       )}
       {...props}
     >
       {children}
       {!hideClose && (
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-1.5 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus-ring">
-          <X className="h-4 w-4" />
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm p-1.5 text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg">
+          <X className="size-4" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>
       )}
@@ -116,7 +168,7 @@ export const DialogContent = React.forwardRef<
 DialogContent.displayName = 'DialogContent';
 
 export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('flex flex-col gap-1.5 text-left', className)} {...props} />;
+  return <div className={cn('flex flex-col gap-2 text-left', className)} {...props} />;
 }
 
 export const DialogTitle = React.forwardRef<
@@ -125,7 +177,7 @@ export const DialogTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn('text-xl font-semibold tracking-tight text-balance', className)}
+    className={cn('display text-2xl text-balance text-fg', className)}
     {...props}
   />
 ));
@@ -137,14 +189,14 @@ export const DialogDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn('text-sm leading-relaxed text-muted-foreground text-pretty', className)}
+    className={cn('text-md leading-relaxed text-pretty text-fg-muted', className)}
     {...props}
   />
 ));
 DialogDescription.displayName = 'DialogDescription';
 
 // ---------------------------------------------------------------------------
-// Checkbox
+// Checkbox / Switch
 // ---------------------------------------------------------------------------
 
 export const Checkbox = React.forwardRef<
@@ -154,22 +206,20 @@ export const Checkbox = React.forwardRef<
   <CheckboxPrimitive.Root
     ref={ref}
     className={cn(
-      'peer h-5 w-5 shrink-0 rounded-[6px] border-2 border-muted-foreground/45 transition-colors focus-ring',
+      'peer size-[18px] shrink-0 rounded-xs border-[1.5px] border-line-strong',
+      'transition-all duration-fast ease-snap',
+      'hover:border-fg-subtle',
       'data-[state=checked]:border-accent data-[state=checked]:bg-accent data-[state=checked]:text-accent-foreground',
       className,
     )}
     {...props}
   >
-    <CheckboxPrimitive.Indicator className="flex items-center justify-center text-current">
-      <Check className="h-3.5 w-3.5 stroke-[3]" />
+    <CheckboxPrimitive.Indicator className="grid place-items-center text-current animate-pop">
+      <Check className="size-3 stroke-[3.5]" />
     </CheckboxPrimitive.Indicator>
   </CheckboxPrimitive.Root>
 ));
 Checkbox.displayName = 'Checkbox';
-
-// ---------------------------------------------------------------------------
-// Switch
-// ---------------------------------------------------------------------------
 
 export const Switch = React.forwardRef<
   React.ElementRef<typeof SwitchPrimitive.Root>,
@@ -178,13 +228,14 @@ export const Switch = React.forwardRef<
   <SwitchPrimitive.Root
     ref={ref}
     className={cn(
-      'peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-ring disabled:cursor-not-allowed disabled:opacity-50',
-      'data-[state=checked]:bg-accent data-[state=unchecked]:bg-muted-foreground/35',
+      'peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent',
+      'transition-colors duration-base ease-snap disabled:cursor-not-allowed disabled:opacity-40',
+      'data-[state=checked]:bg-accent data-[state=unchecked]:bg-line-strong',
       className,
     )}
     {...props}
   >
-    <SwitchPrimitive.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0" />
+    <SwitchPrimitive.Thumb className="pointer-events-none block size-4 rounded-full bg-white shadow-e1 ring-0 transition-transform duration-base ease-spring data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0" />
   </SwitchPrimitive.Root>
 ));
 Switch.displayName = 'Switch';
@@ -199,14 +250,7 @@ export const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
 >(({ className, ...props }, ref) => (
-  <TabsPrimitive.List
-    ref={ref}
-    className={cn(
-      'inline-flex items-center gap-1 rounded-xl bg-secondary/70 p-1 text-muted-foreground',
-      className,
-    )}
-    {...props}
-  />
+  <TabsPrimitive.List ref={ref} className={cn('inline-flex items-center gap-1', className)} {...props} />
 ));
 TabsList.displayName = 'TabsList';
 
@@ -217,9 +261,10 @@ export const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      'inline-flex items-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-1.5 text-sm font-medium transition-all focus-ring',
-      'data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm',
-      'hover:text-foreground',
+      'group relative inline-flex items-center gap-2 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium',
+      'text-fg-muted transition-colors duration-fast ease-out',
+      'hover:bg-surface-3/60 hover:text-fg-secondary',
+      'data-[state=active]:bg-surface-3 data-[state=active]:text-fg',
       className,
     )}
     {...props}
@@ -231,7 +276,11 @@ export const TabsContent = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
 >(({ className, ...props }, ref) => (
-  <TabsPrimitive.Content ref={ref} className={cn('focus-ring', className)} {...props} />
+  <TabsPrimitive.Content
+    ref={ref}
+    className={cn('outline-none data-[state=active]:animate-fade', className)}
+    {...props}
+  />
 ));
 TabsContent.displayName = 'TabsContent';
 
@@ -246,13 +295,14 @@ export const TooltipTrigger = TooltipPrimitive.Trigger;
 export const TooltipContent = React.forwardRef<
   React.ElementRef<typeof TooltipPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
->(({ className, sideOffset = 6, ...props }, ref) => (
+>(({ className, sideOffset = 7, ...props }, ref) => (
   <TooltipPrimitive.Portal>
     <TooltipPrimitive.Content
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        'z-50 max-w-xs overflow-hidden rounded-lg border border-border bg-popover px-3 py-2 text-xs leading-relaxed text-popover-foreground shadow-lg animate-fade-in',
+        'panel-raised z-popover max-w-[17rem] rounded-md px-2.5 py-1.5 text-xs leading-relaxed text-fg-secondary',
+        'data-[state=delayed-open]:animate-pop data-[state=closed]:animate-out data-[state=closed]:fade-out-0',
         className,
       )}
       {...props}
@@ -261,64 +311,230 @@ export const TooltipContent = React.forwardRef<
 ));
 TooltipContent.displayName = 'TooltipContent';
 
+/** Tooltip in one line, for the common icon-button case. */
+export function Hint({
+  label,
+  children,
+  side = 'bottom',
+}: {
+  label: React.ReactNode;
+  children: React.ReactNode;
+  side?: 'top' | 'right' | 'bottom' | 'left';
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side={side}>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Small bits
+// Badge
 // ---------------------------------------------------------------------------
+
+const badgeVariants = cva(
+  'inline-flex items-center gap-1 whitespace-nowrap rounded-full text-2xs font-semibold leading-none ring-1 ring-inset',
+  {
+    variants: {
+      tone: {
+        neutral: 'bg-surface-3 text-fg-muted ring-line',
+        accent: 'bg-accent/10 text-accent ring-accent/25',
+        positive: 'bg-positive/10 text-positive ring-positive/25',
+        caution: 'bg-caution/12 text-caution ring-caution/28',
+        critical: 'bg-critical/10 text-critical ring-critical/25',
+        stated: 'bg-positive/10 text-positive ring-positive/25',
+        inferred: 'bg-caution/12 text-caution ring-caution/28',
+        missing: 'bg-surface-3 text-fg-subtle ring-line',
+      },
+      size: {
+        sm: 'px-1.5 py-[3px] text-[9.5px]',
+        md: 'px-2 py-[4px]',
+      },
+    },
+    defaultVariants: { tone: 'neutral', size: 'md' },
+  },
+);
 
 export function Badge({
   className,
-  tone = 'neutral',
+  tone,
+  size,
   ...props
-}: React.HTMLAttributes<HTMLSpanElement> & {
-  tone?: 'neutral' | 'stated' | 'inferred' | 'missing' | 'warn' | 'danger' | 'accent';
-}) {
-  const tones: Record<string, string> = {
-    neutral: 'bg-secondary text-secondary-foreground',
-    stated: 'bg-stated/12 text-stated ring-1 ring-inset ring-stated/25',
-    inferred: 'bg-inferred/12 text-inferred ring-1 ring-inset ring-inferred/25',
-    missing: 'bg-muted text-muted-foreground ring-1 ring-inset ring-border',
-    warn: 'bg-inferred/12 text-inferred ring-1 ring-inset ring-inferred/30',
-    danger: 'bg-destructive/12 text-destructive ring-1 ring-inset ring-destructive/25',
-    accent: 'bg-accent/12 text-accent ring-1 ring-inset ring-accent/25',
-  };
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium leading-none',
-        tones[tone],
-        className,
-      )}
-      {...props}
-    />
-  );
+}: React.HTMLAttributes<HTMLSpanElement> & VariantProps<typeof badgeVariants>) {
+  return <span className={cn(badgeVariants({ tone, size }), className)} {...props} />;
 }
+
+// ---------------------------------------------------------------------------
+// Feedback
+// ---------------------------------------------------------------------------
 
 export function Spinner({ className }: { className?: string }) {
   return (
     <svg
-      className={cn('h-4 w-4 animate-spin', className)}
+      className={cn('size-4 animate-spin', className)}
       viewBox="0 0 24 24"
       fill="none"
       aria-hidden="true"
     >
-      <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+      <circle className="opacity-20" cx="12" cy="12" r="9.5" stroke="currentColor" strokeWidth="2.75" />
       <path
-        className="opacity-90"
-        d="M12 2a10 10 0 0 1 10 10"
+        d="M12 2.5a9.5 9.5 0 0 1 9.5 9.5"
         stroke="currentColor"
-        strokeWidth="3"
+        strokeWidth="2.75"
         strokeLinecap="round"
       />
     </svg>
   );
 }
 
+export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn('skeleton h-4 w-full', className)} {...props} />;
+}
+
+/**
+ * Skeleton shaped like a paragraph. Ragged final line, because a block of
+ * equal-length bars reads as a table and primes the wrong expectation.
+ */
+export function SkeletonText({
+  lines = 4,
+  className,
+}: {
+  lines?: number;
+  className?: string;
+}) {
+  const widths = ['96%', '88%', '99%', '74%', '92%', '81%', '95%', '62%'];
+  return (
+    <div className={cn('space-y-2.5', className)} aria-hidden="true">
+      {Array.from({ length: lines }, (_, i) => (
+        <Skeleton key={i} className="h-3.5" style={{ width: widths[i % widths.length] }} />
+      ))}
+    </div>
+  );
+}
+
+/** Indeterminate bar for work whose length genuinely cannot be known. */
+export function ProgressTrack({ className }: { className?: string }) {
+  return (
+    <div className={cn('h-[3px] w-full overflow-hidden rounded-full bg-surface-3', className)}>
+      <div className="h-full w-1/3 rounded-full bg-accent animate-drift" />
+    </div>
+  );
+}
+
+/** Determinate meter. */
+export function Meter({ value, className }: { value: number; className?: string }) {
+  const pct = Math.max(0, Math.min(100, value));
+  return (
+    <div
+      className={cn('h-1 w-full overflow-hidden rounded-full bg-surface-3', className)}
+      role="progressbar"
+      aria-valuenow={Math.round(pct)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <div
+        className="h-full rounded-full bg-accent transition-[width] duration-deliberate ease-out"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
+export function EmptyState({
+  icon,
+  title,
+  body,
+  action,
+  className,
+}: {
+  icon?: React.ReactNode;
+  title: string;
+  body?: React.ReactNode;
+  action?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'flex flex-col items-center justify-center rounded-lg border border-dashed border-line px-8 py-14 text-center',
+        className,
+      )}
+    >
+      {icon && (
+        <span className="mb-4 grid size-11 place-items-center rounded-full bg-surface-3 text-fg-subtle">
+          {icon}
+        </span>
+      )}
+      <p className="display text-xl text-fg">{title}</p>
+      {body && (
+        <p className="mt-1.5 max-w-sm text-base leading-relaxed text-pretty text-fg-muted">{body}</p>
+      )}
+      {action && <div className="mt-6">{action}</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Structure
+// ---------------------------------------------------------------------------
+
+export function Divider({
+  className,
+  orientation = 'horizontal',
+  soft,
+}: {
+  className?: string;
+  orientation?: 'horizontal' | 'vertical';
+  soft?: boolean;
+}) {
+  if (orientation === 'vertical') {
+    return <span aria-hidden className={cn('w-px self-stretch bg-line', className)} />;
+  }
+  return (
+    <div
+      aria-hidden
+      className={cn(soft ? 'rule-fade' : 'h-px w-full bg-line', className)}
+    />
+  );
+}
+
+export function Eyebrow({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
+  return <p className={cn('eyebrow', className)} {...props} />;
+}
+
+/** Keyboard hint. */
+export function Kbd({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <kbd
+      className={cn(
+        'mono inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-xs border border-line bg-surface-2 px-1 text-[10px] font-medium text-fg-subtle',
+        className,
+      )}
+    >
+      {children}
+    </kbd>
+  );
+}
+
+/** Small dot used for provenance and status. */
+export function Dot({ tone, className }: { tone: string; className?: string }) {
+  return <span className={cn('size-[7px] shrink-0 rounded-full', tone, className)} aria-hidden />;
+}
+
+// ---------------------------------------------------------------------------
+// Form controls
+// ---------------------------------------------------------------------------
+
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
     <input
       ref={ref}
       className={cn(
-        'flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-ring disabled:cursor-not-allowed disabled:opacity-50',
+        'flex h-8 w-full rounded-md border border-line bg-surface-2 px-2.5 text-base text-fg',
+        'transition-colors duration-fast placeholder:text-fg-subtle',
+        'hover:border-line-strong focus:border-accent/60 focus:bg-surface-1',
+        'disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
       {...props}
@@ -334,10 +550,69 @@ export const Textarea = React.forwardRef<
   <textarea
     ref={ref}
     className={cn(
-      'flex w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-ring disabled:cursor-not-allowed disabled:opacity-50',
+      'flex w-full resize-none rounded-md border border-line bg-surface-2 px-3 py-2 text-md text-fg',
+      'transition-colors duration-fast placeholder:text-fg-subtle',
+      'hover:border-line-strong focus:border-accent/60',
+      'disabled:cursor-not-allowed disabled:opacity-50',
       className,
     )}
     {...props}
   />
 ));
 Textarea.displayName = 'Textarea';
+
+/** Segmented control — a real one, with a sliding indicator. */
+export function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+  className,
+  size = 'md',
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  options: { value: T; label: React.ReactNode }[];
+  className?: string;
+  size?: 'sm' | 'md';
+}) {
+  const index = Math.max(0, options.findIndex((o) => o.value === value));
+
+  return (
+    <div
+      className={cn(
+        'relative inline-grid rounded-md bg-surface-3 p-[3px]',
+        size === 'sm' ? 'h-7' : 'h-8',
+        className,
+      )}
+      style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0,1fr))` }}
+      role="tablist"
+    >
+      {/* The indicator slides between positions rather than the background
+          jumping — the movement is what makes the control feel physical. */}
+      <span
+        aria-hidden
+        className="absolute inset-y-[3px] rounded-sm bg-surface-1 shadow-e1 transition-transform duration-base ease-spring"
+        style={{
+          width: `calc((100% - 6px) / ${options.length})`,
+          transform: `translateX(calc(${index} * 100%))`,
+          left: 3,
+        }}
+      />
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="tab"
+          aria-selected={option.value === value}
+          onClick={() => onChange(option.value)}
+          className={cn(
+            'relative z-10 rounded-sm px-3 text-sm font-medium transition-colors duration-fast',
+            option.value === value ? 'text-fg' : 'text-fg-muted hover:text-fg-secondary',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}

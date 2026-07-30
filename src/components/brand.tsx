@@ -33,14 +33,14 @@ export function Brand({
 }) {
   const content = (
     <span className={cn('flex items-center gap-2.5', className)}>
-      <span className="flex items-baseline gap-[3px]" aria-hidden="true">
-        <span className="block w-[4px] rounded-[1px] bg-[#1B1D21] dark:bg-foreground" style={{ height: 11 }} />
-        <span className="block w-[4px] rounded-[1px] bg-[#3EBBE3]" style={{ height: 16 }} />
-        <span className="block w-[4px] rounded-[1px] bg-[#8DC63F]" style={{ height: 22 }} />
-        <span className="block w-[4px] rounded-[1px] bg-[#1B1D21] dark:bg-foreground" style={{ height: 18 }} />
+      <span className="stagger flex items-baseline gap-[3px]" aria-hidden="true">
+        <span className="block w-[4px] rounded-[1px] bg-tr-ink" style={{ height: 11 }} />
+        <span className="block w-[4px] rounded-[1px] bg-tr-cyan" style={{ height: 16 }} />
+        <span className="block w-[4px] rounded-[1px] bg-tr-green" style={{ height: 22 }} />
+        <span className="block w-[4px] rounded-[1px] bg-tr-ink" style={{ height: 18 }} />
       </span>
 
-      <span className="whitespace-nowrap text-[16px] leading-none tracking-[-0.02em] text-foreground">
+      <span className="whitespace-nowrap text-lg leading-none tracking-[-0.022em] text-fg">
         <span className="font-bold">Traffic</span>
         <span className="font-light"> Radius</span>
       </span>
@@ -49,8 +49,8 @@ export function Brand({
 
       {showName && (
         <>
-          <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border" />
-          <span className="text-[15px] font-semibold tracking-tight text-foreground">{APP_NAME}</span>
+          <span aria-hidden="true" className="h-4 w-px shrink-0 bg-line" />
+          <span className="text-md font-semibold tracking-tight text-fg">{APP_NAME}</span>
         </>
       )}
     </span>
@@ -59,7 +59,7 @@ export function Brand({
   if (!href) return content;
 
   return (
-    <Link href={href} className="focus-ring rounded-md">
+    <Link href={href} className="focus-visible:ring-2 focus-visible:ring-ring/70 rounded-md">
       {content}
     </Link>
   );

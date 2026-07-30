@@ -16,8 +16,8 @@ export default async function RunsPage() {
   const runs = await listRuns();
 
   return (
-    <div className="min-h-dvh bg-background">
-      <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-3 border-b border-border bg-background/85 px-4 backdrop-blur sm:px-6">
+    <div className="atmosphere min-h-dvh bg-bg">
+      <header className="chrome sticky top-0 z-chrome flex h-topbar items-center justify-between gap-3 border-b border-line px-4 sm:px-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon-sm" asChild>
             <Link href="/" aria-label="Back">
@@ -25,7 +25,7 @@ export default async function RunsPage() {
             </Link>
           </Button>
           <Brand href={null} />
-          <span className="hidden text-sm text-muted-foreground sm:inline">· Saved ICPs</span>
+          <span className="hidden text-sm text-fg-muted sm:inline">· Saved ICPs</span>
         </div>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" asChild>
@@ -43,10 +43,10 @@ export default async function RunsPage() {
 
       <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
         {runs.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border px-8 py-16 text-center">
-            <FileText className="mx-auto h-8 w-8 text-muted-foreground/50" />
-            <h2 className="mt-4 text-lg font-semibold">Nothing saved yet</h2>
-            <p className="mx-auto mt-1.5 max-w-sm text-[14px] leading-relaxed text-muted-foreground text-pretty">
+          <div className="rounded-xl border border-dashed border-line px-8 py-16 text-center">
+            <FileText className="mx-auto h-8 w-8 text-fg-muted/50" />
+            <h2 className="display mt-4 text-2xl text-fg">Nothing saved yet</h2>
+            <p className="mx-auto mt-2 max-w-sm text-md leading-relaxed text-pretty text-fg-muted">
               Start a conversation, describe your business, and the profiles you build will live
               here — downloads and all.
             </p>
@@ -55,13 +55,13 @@ export default async function RunsPage() {
             </Button>
           </div>
         ) : (
-          <ul className="space-y-2.5">
+          <ul className="stagger space-y-2.5">
             {runs.map((run) => (
               <li key={run.id}>
-                <div className="group flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-3.5 transition-colors hover:border-muted-foreground/30">
-                  <Link href={`/r/${run.id}`} className="min-w-0 flex-1 focus-ring rounded-md">
-                    <p className="truncate text-[15px] font-medium">{run.title}</p>
-                    <p className="mt-0.5 truncate text-[12.5px] text-muted-foreground">
+                <div className="group flex items-center gap-4 rounded-lg border border-line bg-surface-1 px-4 py-3.5 shadow-e1 transition-all duration-base ease-out hover:-translate-y-px hover:border-line-strong hover:shadow-e2">
+                  <Link href={`/r/${run.id}`} className="min-w-0 flex-1 focus-visible:ring-2 focus-visible:ring-ring/70 rounded-md">
+                    <p className="truncate text-md font-medium text-fg">{run.title}</p>
+                    <p className="mt-0.5 truncate text-sm text-fg-muted">
                       {[run.industry, run.region].filter(Boolean).join(' · ') || 'Brief in progress'}
                       {' · '}
                       {new Date(run.updatedAt).toLocaleDateString(undefined, {
@@ -74,11 +74,11 @@ export default async function RunsPage() {
 
                   <div className="flex shrink-0 items-center gap-2">
                     {run.documentCount > 0 ? (
-                      <Badge tone={run.completeCount === run.documentCount ? 'stated' : 'warn'}>
+                      <Badge tone={run.completeCount === run.documentCount ? 'positive' : 'caution'}>
                         {run.completeCount}/{run.documentCount} profiles
                       </Badge>
                     ) : (
-                      <Badge tone="missing">No profiles yet</Badge>
+                      <Badge tone="neutral">No profiles yet</Badge>
                     )}
                     <RunCardActions runId={run.id} hasDocuments={run.documentCount > 0} />
                   </div>
