@@ -9,7 +9,7 @@
 import 'server-only';
 import JSZip from 'jszip';
 import { prisma } from './db';
-import { awarenessLabel, awarenessShort, sortScenarios, type AwarenessKey } from './awareness';
+import { awarenessLabel, awarenessShort, scenarioRank, type AwarenessKey } from './awareness';
 import {
   buildAwarenessMapDocx,
   buildSingleDocx,
@@ -50,12 +50,9 @@ export function exportableDocuments(run: ExportRun, serviceIndex?: number): Expo
       (serviceIndex === undefined || doc.serviceIndex === serviceIndex),
   );
 
-  const order = sortScenarios(usable.map((d) => d.scenario as AwarenessKey));
   return usable.sort((a, b) => {
     if (a.serviceIndex !== b.serviceIndex) return a.serviceIndex - b.serviceIndex;
-    return (
-      order.indexOf(a.scenario as AwarenessKey) - order.indexOf(b.scenario as AwarenessKey)
-    );
+    return scenarioRank(a.scenario as AwarenessKey) - scenarioRank(b.scenario as AwarenessKey);
   });
 }
 

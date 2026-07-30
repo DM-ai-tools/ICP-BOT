@@ -13,7 +13,6 @@ import {
   Check,
   Copy,
   Download,
-  FileText,
   Layers,
   RefreshCw,
   Wrench,
@@ -75,7 +74,6 @@ export function ResultsView({
     const entries: {
       value: string;
       label: string;
-      sublabel?: string;
       doc?: DocumentSummary;
       liveDoc?: LiveDoc;
     }[] = [];
@@ -93,7 +91,6 @@ export function ResultsView({
       entries.push({
         value,
         label: awarenessShort(doc.scenario),
-        sublabel: state.slots.services && state.slots.services.length > 1 ? doc.serviceName : undefined,
         doc,
         liveDoc: live[value],
       });
@@ -644,5 +641,3 @@ function ExportLink({
     </a>
   );
 }
-
-export { FileText };

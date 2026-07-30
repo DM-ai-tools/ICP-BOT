@@ -25,7 +25,6 @@ import {
 } from '@/lib/slots';
 import type { RunState } from '@/lib/types';
 import {
-  Badge,
   Button,
   Input,
   Spinner,

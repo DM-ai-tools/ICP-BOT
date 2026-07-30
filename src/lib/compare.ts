@@ -12,7 +12,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { z } from 'zod';
 import { env } from './env';
 import { complete, parseJsonLoose } from './openai';
-import { awarenessLabel, sortScenarios, type AwarenessKey } from './awareness';
+import { awarenessLabel, scenarioRank, type AwarenessKey } from './awareness';
 import { parseSections } from './markdown';
 import { comparisonToMarkdown, type ComparisonRow } from './comparison';
 import { AUDIENCE_TYPE_LABEL, BUSINESS_MODEL_SHORT, type SlotValues } from './slots';
@@ -94,9 +94,7 @@ export async function buildComparison(
   input: CompareInput,
 ): Promise<{ rows: ComparisonRow[]; markdown: string }> {
   const ordered = [...input.documents].sort(
-    (a, b) =>
-      sortScenarios([a.scenario, b.scenario]).indexOf(a.scenario) -
-      sortScenarios([a.scenario, b.scenario]).indexOf(b.scenario),
+    (a, b) => scenarioRank(a.scenario) - scenarioRank(b.scenario),
   );
 
   const blocks = ordered.map((doc) =>
@@ -158,8 +156,7 @@ export async function buildComparison(
       primaryObjection: row.primaryObjection.trim(),
     }));
 
-  const sorted = sortScenarios(rows.map((r) => r.scenario));
-  rows.sort((a, b) => sorted.indexOf(a.scenario) - sorted.indexOf(b.scenario));
+  rows.sort((a, b) => scenarioRank(a.scenario) - scenarioRank(b.scenario));
 
   return { rows, markdown: comparisonToMarkdown(rows, input.serviceName) };
 }

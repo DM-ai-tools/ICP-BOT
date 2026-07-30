@@ -108,9 +108,20 @@ export function isAwarenessKey(value: unknown): value is AwarenessKey {
   return typeof value === 'string' && value in AWARENESS;
 }
 
+/**
+ * Canonical position of a scenario, unaware (1) → most aware (5).
+ *
+ * Use this to order anything — tabs, chapters, comparison rows. Deriving order
+ * by `indexOf` into a list of scenarios breaks the moment that list contains
+ * the same scenario twice, which it does as soon as a brief has two services.
+ */
+export function scenarioRank(key: AwarenessKey): number {
+  return AWARENESS[key]?.order ?? 99;
+}
+
 /** Sort scenario keys into the canonical unaware → most aware order. */
 export function sortScenarios(keys: AwarenessKey[]): AwarenessKey[] {
-  return [...keys].sort((a, b) => (AWARENESS[a]?.order ?? 99) - (AWARENESS[b]?.order ?? 99));
+  return [...keys].sort((a, b) => scenarioRank(a) - scenarioRank(b));
 }
 
 /**
