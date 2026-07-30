@@ -11,6 +11,10 @@
  * ICP records which version produced it.
  */
 import 'server-only';
+// Node builtins. This module is Node-runtime only — `server-only` keeps it out
+// of client bundles, and it must never be imported from instrumentation.ts
+// either: Next compiles that entrypoint for the Edge runtime too, and webpack
+// will follow the import there and fail the whole dev server on these lines.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
