@@ -1,0 +1,182 @@
+// ICP Builder — persistence.
+// Postgres, NOT SQLite: Railway's filesystem is ephemeral and SQLite would
+// lose every saved ICP on redeploy.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// One end-to-end session: the conversation, the resolved brief, and every
+/// document generated from it. Conversation state lives here so a refresh or
+/// a redeploy never loses a half-finished brief.
+model Run {
+  id    String @id @default(cuid())
+  title String @default("Untitled ICP")
+
+  /// Resolved slot values (see src/lib/slots.ts — SlotValues).
+  slots Json @default("{}")
+
+  /// Per-slot provenance: { source: stated|inferred|default, confidence,
+  /// justification, editedByUser }.
+  slotMeta Json @default("{}")
+
+  /// Latest resolver diagnostics: missing[] and ambiguities[].
+  missing     Json @default("[]")
+  ambiguities Json @default("[]")
+
+  /// Website fetch. Non-fatal: failure is mentioned once in chat, never blocks.
+  siteContext     String?
+  siteFetchStatus String? // pending | ok | failed | skipped
+  siteFetchedUrl  String?
+  siteNoticeShown Boolean @default(false)
+
+  /// Regulated vertical (health|dental|medical|finance|legal) — appends the
+  /// compliance-language reminder and flags the run in the UI.
+  regulated       Boolean @default(false)
+  regulatedReason String?
+
+  /// Stamped at creation and onto every document. The master prompt is
+  /// immutable and versioned; documents record which version produced them.
+  masterPromptVersion String
+
+  /// Set once the awareness modal has been answered (or awareness was settled
+  /// in conversation and the modal was skipped).
+  awarenessResolvedInChat Boolean @default(false)
+  awarenessModalAnswered  Boolean @default(false)
+
+  /// Rolling usage totals for the run.
+  promptTokens     Int   @default(0)
+  completionTokens Int   @default(0)
+  costUsd          Float @default(0)
+
+  messages    Message[]
+  documents   Document[]
+  comparisons Comparison[]
+  usage       UsageLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([updatedAt])
+}
+
+model Message {
+  id    String @id @default(cuid())
+  runId String
+  run   Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  role    String // user | assistant | system
+  content String
+
+  /// Ordinal within the thread; kept explicit so identical timestamps can't
+  /// scramble the history sent to the resolver.
+  seq Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([runId, seq])
+  @@index([runId, seq])
+}
+
+/// One generated ICP document = one (service, awareness scenario) pair.
+/// The unique constraint is what makes generation idempotent: a retry can
+/// never duplicate a document or double-charge for one.
+model Document {
+  id    String @id @default(cuid())
+  runId String
+  run   Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  serviceIndex Int
+  serviceName  String
+
+  /// Internal scenario key, e.g. "problem_aware".
+  scenario String
+  /// The master prompt's exact wording, e.g. "Only Problem-Aware".
+  awarenessLabel String
+
+  markdown String @default("")
+
+  /// pending | generating | complete | repaired | failed | stale
+  status String @default("pending")
+
+  /// Per-section validation report (see src/lib/validate.ts).
+  validation Json?
+
+  /// Badge shown in the UI: complete | repaired | failed.
+  badge String?
+
+  errorMessage String?
+
+  masterPromptVersion String
+
+  promptTokens     Int   @default(0)
+  completionTokens Int   @default(0)
+  costUsd          Float @default(0)
+
+  /// Snapshot of the slots used, so an edited brief never rewrites history.
+  slotsSnapshot Json?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  @@unique([runId, serviceIndex, scenario])
+  @@index([runId])
+}
+
+/// Cross-scenario comparison table. One per (run, service) once 2+ scenarios
+/// exist. Rendered as the first tab and the cover section of the combined
+/// export — this is what makes the bundle a deliverable rather than loose files.
+model Comparison {
+  id    String @id @default(cuid())
+  runId String
+  run   Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  serviceIndex Int
+  serviceName  String
+
+  /// [{ scenario, dominantBelief, messageThatLands, messageThatBackfires,
+  ///    bestChannel, primaryObjection }]
+  rows Json @default("[]")
+
+  markdown String @default("")
+
+  /// Scenario keys the table was built from; a stale set triggers a rebuild.
+  scenarioKeys Json @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([runId, serviceIndex])
+  @@index([runId])
+}
+
+/// Per-call token and cost logging.
+model UsageLog {
+  id    String @id @default(cuid())
+  runId String?
+  run   Run?    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  /// resolve | converse | generate_a | generate_b | generate_c | repair |
+  /// compare | title
+  kind  String
+  model String
+
+  promptTokens     Int   @default(0)
+  completionTokens Int   @default(0)
+  costUsd          Float @default(0)
+
+  durationMs Int?
+  attempts   Int  @default(1)
+  ok         Boolean @default(true)
+  detail     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([runId, createdAt])
+}

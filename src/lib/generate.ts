@@ -1,0 +1,335 @@
+/**
+ * PASS 3 — GENERATE.
+ *
+ * Three sequential calls per document, never one monolithic call. A single call
+ * asked to produce all nineteen sections reliably starves everything after
+ * Objections: the model front-loads effort, and Market Opportunities, Success
+ * Stories, Deal Value and the Qualification Checklist arrive as three-line
+ * stubs. Splitting the work gives each third of the document a full budget.
+ *
+ * The system message is the master prompt, verbatim, every single time — no
+ * summary, no excerpt, no "as described above".
+ */
+import 'server-only';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { env } from './env';
+import { streamComplete } from './openai';
+import { masterPrompt, SECTIONS_BY_PASS, type SectionSpec } from './master-prompt';
+import { awarenessLabel } from './awareness';
+import {
+  AUDIENCE_TYPE_LABEL,
+  BUSINESS_MODEL_LABEL,
+  COMPANY_TYPE_LABEL,
+  MATURITY_LABEL,
+  PRICE_NOT_SPECIFIED,
+  detectRegulated,
+  priceLine,
+  type AwarenessKey,
+  type ServiceSlot,
+  type SlotValues,
+} from './slots';
+
+export type PassId = 'A' | 'B' | 'C';
+
+export interface GenerationContext {
+  runId: string;
+  slots: SlotValues;
+  service: ServiceSlot;
+  scenario: AwarenessKey;
+  /** Grounded website text, already wrapped by verifiedContextBlock(). */
+  verifiedContext?: string | null;
+  /** One line assembled from the conversation. */
+  whyFraming: string;
+  signal?: AbortSignal;
+}
+
+// ---------------------------------------------------------------------------
+// The labelled input block
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders the resolved brief using the master prompt's own input names.
+ *
+ * Two guardrails live here rather than in the prompt, because a prompt can be
+ * ignored and code cannot:
+ *   - a blank price becomes the mandated "not specified" sentence, so there is
+ *     no empty field for the model to helpfully fill with a number;
+ *   - exactly one audience_type is ever emitted, so the master prompt's
+ *     non-mixing rule has nothing to trip over.
+ */
+export function buildInputBlock(ctx: GenerationContext): string {
+  const s = ctx.slots;
+  const service = ctx.service;
+
+  const audience = s.audience_type ?? 'direct_buyer';
+  const companyType = s.company_type ?? 'other';
+  const maturity = s.maturity_tier ?? 'intermediate';
+  const model = s.business_model ?? 'b2b';
+
+  const serviceLine =
+    model === 'b2c'
+      ? `${service.name} — ${priceLine(service)}`
+      : `${service.name} — ${priceLine(service)}`;
+
+  const lines = [
+    `Your Company Name: ${s.company_name?.trim() || 'Not specified'}`,
+    `Website URL: ${s.website_url?.trim() || 'Not specified'}`,
+    `Your Company Type: ${COMPANY_TYPE_LABEL[companyType]}`,
+    `Audience Type (ICP Orientation): ${AUDIENCE_TYPE_LABEL[audience]}`,
+    `Maturity Tier: ${MATURITY_LABEL[maturity]}`,
+    `Industry (of the ICP you are targeting): ${s.industry?.trim() || 'Not specified'}`,
+    `Offer type (what is being sold to the ICP): ${s.offer_type?.trim() || service.name}`,
+    `Service/Product being sold: ${serviceLine}`,
+    `Market/Region/Country: ${s.region?.trim() || 'Not specified'}`,
+    `Business Model Selector: ${BUSINESS_MODEL_LABEL[model]}`,
+    `Awareness level to generate: ${awarenessLabel(ctx.scenario)}`,
+    `Company size / revenue band of the ICP${model === 'b2c' ? ' (household/earning reality)' : ''}: ${
+      s.size_band?.trim() || 'Not specified'
+    }`,
+    `Any notes/constraints: ${s.notes?.trim() || 'None'}`,
+  ];
+
+  return lines.join('\n');
+}
+
+function pricingGuardrail(service: ServiceSlot): string {
+  if (service.price_terms?.trim()) {
+    return `PRICING: The price/terms above are exactly what the user provided. Reflect them as given. Do not extrapolate them into other figures, ranges, projections, ROI numbers or lifetime values that the user did not state.`;
+  }
+  return `PRICING: No price was provided. Where price/terms appear in the output, use exactly: "${PRICE_NOT_SPECIFIED}". Under "Average Deal Value of the Service", state "Average deal value: unknown (price not provided)" and give a Low/Mid/High band structure by scope and inclusions. Do NOT invent any currency figure anywhere in this document, including in Success Stories.`;
+}
+
+function complianceGuardrail(slots: SlotValues): string | null {
+  const { regulated, reason } = detectRegulated(slots);
+  if (!regulated) return null;
+  return [
+    `COMPLIANCE — this is a regulated industry (${reason}).`,
+    'Avoid guarantees and absolute outcome claims throughout. Use compliance-aware language: "may", "varies",',
+    '"subject to suitability", "general information only". Do not imply clinical, financial or legal outcomes.',
+    'Success Stories must read as plausible and hedged, never as promises, and must contain no invented figures.',
+  ].join(' ');
+}
+
+function audienceGuardrail(slots: SlotValues): string {
+  const audience = slots.audience_type ?? 'direct_buyer';
+  const label = AUDIENCE_TYPE_LABEL[audience];
+  const nonMixing =
+    audience === 'clients_customer'
+      ? 'Every objection must be a customer-level buying objection. No vendor procurement, no agency selection, no B2B contract dynamics anywhere in this document.'
+      : audience === 'channel_partner'
+        ? 'Frame throughout as a partnership decision: commercials, deal registration, margin, co-marketing, conflict with existing partners.'
+        : 'Procurement and vendor-fit dynamics are in scope, but keep the buyer rational and non-caricatured, and keep every objection aligned to the awareness level.';
+
+  return `AUDIENCE ORIENTATION — this document is built for exactly one audience type: ${label}. ${nonMixing} Do not blend orientations at any point.`;
+}
+
+// ---------------------------------------------------------------------------
+// Per-pass task instructions
+// ---------------------------------------------------------------------------
+
+function sectionInstruction(section: SectionSpec, index: number): string {
+  const marker = section.level === 1 ? '#' : '##';
+  const target =
+    section.kind === 'narrative'
+      ? ` Minimum ${section.minWords} words of substance — full sentences and specifics, not shallow bullets.`
+      : section.kind === 'objections'
+        ? ' EXACTLY 8, numbered 1 to 8. Each: the objection in the buyer\'s own words, then "What it really means:" and the hidden meaning.'
+        : section.kind === 'checklist'
+          ? ' Between 8 and 12 yes/no qualifiers, as a numbered list.'
+          : section.kind === 'stories'
+            ? ' Between 2 and 4 mini-narratives, each with a bolded lead-in. No invented hard numbers.'
+            : '';
+
+  return `${index}. ${marker} ${section.heading}${target}`;
+}
+
+function passTask(pass: PassId, ctx: GenerationContext): string {
+  const sections = SECTIONS_BY_PASS[pass];
+  const list = sections.map((s, i) => sectionInstruction(s, i + 1)).join('\n');
+
+  const passName = { A: 'PART 1 OF 3', B: 'PART 2 OF 3', C: 'PART 3 OF 3' }[pass];
+
+  const header = [
+    `TASK — ${passName}`,
+    '',
+    'This ICP is being written in three parts so every section gets full depth. Produce ONLY the sections',
+    'listed below, in this exact order, using these exact headings and markdown levels. Do not add a preamble,',
+    'do not add a closing summary, do not restate sections from another part, and do not announce which part',
+    'this is. Begin directly with the first heading.',
+    '',
+    list,
+  ];
+
+  if (pass === 'A') {
+    header.push(
+      '',
+      'The Title Line is a level-1 heading containing the full pipe-separated line from the master prompt format.',
+      'Avatar Name and the jargon line are one line each, under their own level-2 headings.',
+      'The avatar you name here is the person for the entire document — later parts will build on it.',
+    );
+  }
+  if (pass === 'B') {
+    header.push(
+      '',
+      'Stay in the same avatar, voice, region and jargon set established in Part 1. Do not re-introduce the',
+      'avatar or restate their identity — go straight into their goals.',
+    );
+  }
+  if (pass === 'C') {
+    header.push(
+      '',
+      'Stay in the same avatar, voice, region and jargon set. This part closes the document — Objections must',
+      'be exactly 8, and the Qualification Checklist must be the final section.',
+    );
+  }
+
+  header.push(
+    '',
+    `AWARENESS DISCIPLINE — this document is ${awarenessLabel(ctx.scenario)} and nothing else. Every section must`,
+    'read as that stage. This document will sit beside versions written at other awareness stages, and it must be',
+    'visibly, unmistakably different from them in what the buyer believes, what language they use, what they are',
+    'weighing up and what would move them. Do not drift into later-stage certainty or earlier-stage ignorance.',
+  );
+
+  return header.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Message assembly
+// ---------------------------------------------------------------------------
+
+export function buildUserMessage(
+  pass: PassId,
+  ctx: GenerationContext,
+  previous: { a?: string; b?: string } = {},
+): string {
+  const blocks: string[] = [];
+
+  blocks.push(`WHY THIS ICP IS BEING BUILT\n${ctx.whyFraming}`);
+
+  if (ctx.verifiedContext?.trim()) {
+    blocks.push(ctx.verifiedContext.trim());
+  }
+
+  blocks.push(`INPUTS\n${buildInputBlock(ctx)}`);
+  blocks.push(pricingGuardrail(ctx.service));
+  blocks.push(audienceGuardrail(ctx.slots));
+
+  const compliance = complianceGuardrail(ctx.slots);
+  if (compliance) blocks.push(compliance);
+
+  // Parts A and B are carried into C verbatim so the avatar name, voice, region
+  // and jargon stay identical across the seams of the document.
+  if (pass === 'B' && previous.a) {
+    blocks.push(
+      `ALREADY WRITTEN — PART 1 (for continuity only; do not repeat any of it)\n---\n${previous.a}\n---`,
+    );
+  }
+  if (pass === 'C') {
+    const carried = [previous.a, previous.b].filter(Boolean).join('\n\n');
+    if (carried) {
+      blocks.push(
+        `ALREADY WRITTEN — PARTS 1 AND 2 (for continuity only; do not repeat any of it)\n---\n${carried}\n---`,
+      );
+    }
+  }
+
+  blocks.push(passTask(pass, ctx));
+
+  return blocks.join('\n\n');
+}
+
+export interface GeneratePassResult {
+  text: string;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+}
+
+export async function generatePass(
+  pass: PassId,
+  ctx: GenerationContext,
+  previous: { a?: string; b?: string },
+  onDelta: (chunk: string) => void | Promise<void>,
+): Promise<GeneratePassResult> {
+  const messages: ChatCompletionMessageParam[] = [
+    // Verbatim. Every time. Never paraphrased.
+    { role: 'system', content: masterPrompt() },
+    { role: 'user', content: buildUserMessage(pass, ctx, previous) },
+  ];
+
+  const { text, usage } = await streamComplete({
+    kind: pass === 'A' ? 'generate_a' : pass === 'B' ? 'generate_b' : 'generate_c',
+    runId: ctx.runId,
+    model: env.model,
+    messages,
+    temperature: env.temperature,
+    maxTokens: env.maxTokens,
+    onDelta,
+    signal: ctx.signal,
+  });
+
+  return {
+    text: text.trim(),
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    costUsd: usage.costUsd,
+  };
+}
+
+/**
+ * Runs all three passes and returns the assembled markdown.
+ * Deltas are forwarded as they arrive so the UI streams a document being
+ * written, not three documents appearing.
+ */
+export async function generateDocument(
+  ctx: GenerationContext,
+  onDelta: (chunk: string, pass: PassId) => void | Promise<void>,
+): Promise<{ markdown: string; promptTokens: number; completionTokens: number; costUsd: number }> {
+  const a = await generatePass('A', ctx, {}, (chunk) => onDelta(chunk, 'A'));
+
+  const separatorAfterA = '\n\n';
+  await onDelta(separatorAfterA, 'A');
+
+  const b = await generatePass('B', ctx, { a: a.text }, (chunk) => onDelta(chunk, 'B'));
+  await onDelta(separatorAfterA, 'B');
+
+  const c = await generatePass('C', ctx, { a: a.text, b: b.text }, (chunk) => onDelta(chunk, 'C'));
+
+  return {
+    markdown: [a.text, b.text, c.text].join('\n\n'),
+    promptTokens: a.promptTokens + b.promptTokens + c.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens + c.completionTokens,
+    costUsd: a.costUsd + b.costUsd + c.costUsd,
+  };
+}
+
+/**
+ * The one-line "why this ICP is being built", assembled from the conversation
+ * rather than templated from slots alone — it gives the model the intent behind
+ * the brief, which is what stops the output reading like a filled-in form.
+ */
+export function buildWhyFraming(slots: SlotValues, firstUserMessage: string | null): string {
+  const bits: string[] = [];
+  const who = slots.company_name?.trim();
+  const audience = slots.audience_type ?? 'direct_buyer';
+
+  const target =
+    audience === 'clients_customer'
+      ? `the end customers their clients want to reach in ${slots.industry ?? 'their market'}`
+      : audience === 'channel_partner'
+        ? `referral and channel partners in ${slots.industry ?? 'their market'}`
+        : `the ${slots.industry ?? 'businesses'} that would buy from them`;
+
+  bits.push(
+    `${who ? `${who} is` : 'The user is'} building this profile to sharpen how they reach ${target}` +
+      `${slots.region ? ` in ${slots.region}` : ''}.`,
+  );
+
+  if (firstUserMessage?.trim()) {
+    const brief = firstUserMessage.trim().replace(/\s+/g, ' ').slice(0, 400);
+    bits.push(`In their own words: "${brief}"`);
+  }
+
+  return bits.join(' ');
+}

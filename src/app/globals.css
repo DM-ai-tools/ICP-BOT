@@ -1,0 +1,233 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 40 20% 98%;
+    --foreground: 220 20% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 12%;
+
+    --primary: 217 60% 26%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 16% 95%;
+    --secondary-foreground: 220 20% 20%;
+
+    --muted: 220 16% 95%;
+    --muted-foreground: 220 10% 44%;
+
+    --accent: 173 58% 39%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 65% 48%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 14% 89%;
+    --input: 220 14% 89%;
+    --ring: 217 60% 40%;
+
+    --surface: 220 20% 97%;
+
+    --stated: 162 55% 36%;
+    --inferred: 38 85% 45%;
+    --missing: 220 10% 62%;
+
+    --radius: 0.7rem;
+  }
+
+  .dark {
+    --background: 222 24% 8%;
+    --foreground: 210 20% 93%;
+
+    --card: 222 22% 11%;
+    --card-foreground: 210 20% 93%;
+
+    --popover: 222 24% 12%;
+    --popover-foreground: 210 20% 93%;
+
+    --primary: 210 90% 66%;
+    --primary-foreground: 222 30% 10%;
+
+    --secondary: 222 18% 17%;
+    --secondary-foreground: 210 20% 90%;
+
+    --muted: 222 18% 16%;
+    --muted-foreground: 218 12% 62%;
+
+    --accent: 172 62% 48%;
+    --accent-foreground: 222 30% 10%;
+
+    --destructive: 0 62% 56%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 16% 20%;
+    --input: 220 16% 22%;
+    --ring: 210 90% 60%;
+
+    --surface: 222 22% 10%;
+
+    --stated: 160 55% 48%;
+    --inferred: 38 88% 58%;
+    --missing: 220 10% 45%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    @apply bg-primary/25;
+  }
+
+  /* Calm, unobtrusive scrollbars — the app is mostly long reading columns. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+    background-clip: content-box;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Rendered ICP documents and chat markdown. */
+  .prose-icp {
+    @apply text-[15px] leading-[1.72] text-foreground/90;
+  }
+  .prose-icp > * + * {
+    @apply mt-4;
+  }
+  .prose-icp h1 {
+    @apply mb-3 mt-8 scroll-mt-24 text-balance text-2xl font-semibold leading-tight tracking-tight text-foreground first:mt-0;
+  }
+  .prose-icp h2 {
+    @apply mb-2 mt-9 scroll-mt-24 border-b border-border/70 pb-2 text-[1.05rem] font-semibold uppercase tracking-[0.08em] text-foreground/80 first:mt-0;
+  }
+  .prose-icp h3 {
+    @apply mb-1.5 mt-6 scroll-mt-24 text-base font-semibold text-foreground;
+  }
+  .prose-icp h4 {
+    @apply mb-1 mt-5 scroll-mt-24 text-[0.95rem] font-semibold text-foreground/85;
+  }
+  .prose-icp p {
+    @apply text-pretty;
+  }
+  .prose-icp strong {
+    @apply font-semibold text-foreground;
+  }
+  .prose-icp em {
+    @apply italic text-foreground/85;
+  }
+  .prose-icp ul {
+    @apply ml-1 list-none space-y-2;
+  }
+  .prose-icp ul > li {
+    @apply relative pl-5;
+  }
+  .prose-icp ul > li::before {
+    content: '';
+    @apply absolute left-0 top-[0.7em] h-1.5 w-1.5 rounded-full bg-accent/70;
+  }
+  .prose-icp ol {
+    @apply ml-5 list-decimal space-y-2 marker:font-medium marker:text-muted-foreground;
+  }
+  .prose-icp ol > li {
+    @apply pl-1.5;
+  }
+  .prose-icp blockquote {
+    @apply border-l-2 border-accent/60 pl-4 italic text-muted-foreground;
+  }
+  .prose-icp code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em];
+  }
+  .prose-icp hr {
+    @apply my-8 border-border;
+  }
+  .prose-icp a {
+    @apply text-primary underline underline-offset-2;
+  }
+  .prose-icp table {
+    @apply my-4 block w-full overflow-x-auto text-sm;
+  }
+  .prose-icp th {
+    @apply border-b border-border px-3 py-2 text-left font-semibold;
+  }
+  .prose-icp td {
+    @apply border-b border-border/60 px-3 py-2 align-top;
+  }
+
+  /* Chat bubbles run tighter than documents. */
+  .prose-chat {
+    @apply text-[15px] leading-[1.65];
+  }
+  .prose-chat > * + * {
+    @apply mt-3;
+  }
+  .prose-chat strong {
+    @apply font-semibold;
+  }
+  .prose-chat ul {
+    @apply ml-4 list-disc space-y-1.5;
+  }
+  .prose-chat ol {
+    @apply ml-4 list-decimal space-y-1.5;
+  }
+  .prose-chat code {
+    @apply rounded bg-black/10 px-1 py-0.5 font-mono text-[0.85em] dark:bg-white/10;
+  }
+
+  .focus-ring {
+    @apply outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+  /* Streaming caret that follows the last token. */
+  .streaming-caret::after {
+    content: '';
+    @apply ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[0.16em] bg-current align-baseline;
+    animation: blink 1s ease-in-out infinite;
+  }
+}
