@@ -7,8 +7,9 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FolderClock, MessageSquare, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
+import { FolderClock, Gauge, MessageSquare, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
 import { AwarenessModal } from '@/components/awareness-modal';
+import { Brand } from '@/components/brand';
 import { BriefPanel } from '@/components/brief-panel';
 import { ChatPanel, type ThreadMessage } from '@/components/chat-panel';
 import { ResultsView, type LiveDoc } from '@/components/results-view';
@@ -333,12 +334,7 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-4 sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
-          <Link href="/" className="flex items-center gap-2 focus-ring rounded-md">
-            <span className="grid h-7 w-7 place-items-center rounded-lg bg-primary text-[13px] font-bold text-primary-foreground">
-              I
-            </span>
-            <span className="text-[15px] font-semibold tracking-tight">ICP Builder</span>
-          </Link>
+          <Brand />
           <span className="hidden truncate text-sm text-muted-foreground sm:block">
             {state.title !== 'Untitled ICP' ? `· ${state.title}` : ''}
           </span>
@@ -373,6 +369,11 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
           <Button variant="ghost" size="icon-sm" asChild title="Saved runs">
             <Link href="/runs">
               <FolderClock />
+            </Link>
+          </Button>
+          <Button variant="ghost" size="icon-sm" asChild title="Admin — usage and history">
+            <Link href="/admin">
+              <Gauge />
             </Link>
           </Button>
           <Button variant="ghost" size="icon-sm" onClick={newRun} title="New ICP">

@@ -1,4 +1,6 @@
-# ICP Builder
+# Prism
+
+*by Traffic Radius*
 
 A standalone web app whose front door is a conversation. Describe your business
 in plain English; a strategist bot holds a real conversation, quietly assembles
@@ -93,8 +95,10 @@ problem if an OpenAI key is ever exposed that way.
 `railway.json` is committed and pins everything:
 
 - **Build:** `npm run build`
-- **Release:** `npx prisma migrate deploy` (as `preDeployCommand` — never
-  `db push`, which would silently drop columns)
+- **Release:** `npm run release` (as `preDeployCommand`) — wraps
+  `prisma migrate deploy`, never `db push`, which would silently drop columns.
+  It checks `DATABASE_URL` first and prints the exact fix if it is missing,
+  rather than failing with an opaque Prisma `P1012`.
 - **Start:** `npm start`
 - **Healthcheck:** `/api/health`
 
@@ -217,6 +221,26 @@ then dies at first request with an opaque launch error.
 
 ---
 
+## Admin panel
+
+`/admin` reports what the app has actually spent and produced:
+
+- Headline totals — spend, tokens in/out, documents, runs, average cost per run
+- Spend by call type, so the three-call generation split is visible against
+  resolution and conversation
+- Spend by model
+- Full run history with per-run tokens, cost, turn count and a zip download
+- Every document created, with quality badge, word count, cost and DOCX / PDF /
+  Markdown links
+- Recent failed calls with their retry count and error detail
+
+Costs are computed from the `OPENAI_PRICE_*` rates — an estimate for tracking,
+not a billing record. Reconcile against your OpenAI dashboard.
+
+**The panel has no authentication.** Anything reachable at `/admin` is reachable
+by anyone with the URL, so put the service behind Railway's access controls or
+add auth before pointing it at a public domain.
+
 ## Project layout
 
 ```
@@ -239,12 +263,15 @@ src/lib/
 
 src/app/api/
   health, health/stream        Railway healthcheck and a streaming diagnostic
+  (page) /admin                Usage, spend, run history and every document
   chat                         SSE: resolve → scrape → converse → state
   generate                     SSE: three-chunk generation, validation, comparison
   export                       DOCX / PDF / Markdown / ZIP, built on demand
   runs, runs/[id], .../slots   Run lifecycle and click-to-edit brief
 
-src/components/                Chat, brief panel, awareness modal, results view
+src/lib/brand.ts               Product name, tagline, logo path — change the name here
+public/traffic-radius-logo.svg  Logo. Overwrite this file to swap in the official asset
+src/components/                Chat, brief panel, awareness modal, results view, admin
 scripts/selftest.mts           Offline engine tests
 scripts/postbuild.mjs          Completes the standalone output for Railway
 ```

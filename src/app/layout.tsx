@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
+import { APP_DESCRIPTION, APP_FULL_NAME, APP_NAME } from '@/lib/brand';
 import { ThemeProvider } from '@/components/theme-provider';
 import { TooltipProvider } from '@/components/ui/primitives';
 
@@ -11,9 +12,10 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'ICP Builder',
-  description:
-    'Describe your business in plain English. Get detailed, downloadable Ideal Customer Profiles across every awareness stage.',
+  title: { default: APP_NAME, template: `%s · ${APP_NAME}` },
+  description: APP_DESCRIPTION,
+  applicationName: APP_FULL_NAME,
+  icons: { icon: '/traffic-radius-logo.svg' },
 };
 
 export const viewport: Viewport = {

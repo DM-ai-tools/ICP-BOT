@@ -3,6 +3,7 @@ import { ArrowLeft, FileText, Plus } from 'lucide-react';
 import { listRuns } from '@/lib/run-service';
 import { RunCardActions } from '@/components/run-card-actions';
 import { Badge, Button } from '@/components/ui/primitives';
+import { Brand } from '@/components/brand';
 import { ThemeToggle } from '@/components/theme-provider';
 
 export const dynamic = 'force-dynamic';
@@ -23,9 +24,13 @@ export default async function RunsPage() {
               <ArrowLeft />
             </Link>
           </Button>
-          <h1 className="text-[15px] font-semibold tracking-tight">Saved ICPs</h1>
+          <Brand href={null} />
+          <span className="hidden text-sm text-muted-foreground sm:inline">· Saved ICPs</span>
         </div>
         <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/admin">Admin</Link>
+          </Button>
           <ThemeToggle />
           <Button size="sm" asChild>
             <Link href="/">
