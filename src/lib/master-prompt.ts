@@ -54,9 +54,18 @@ function load(): LoadedPrompt {
       const raw = readFileSync(candidate, 'utf8');
       if (!raw.trim()) continue;
 
-      // Strip a UTF-8 BOM if the file was saved from Windows Notepad; leave
-      // every other byte exactly as authored.
-      const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+      // Two transport artefacts are normalised before anything else touches
+      // the text — a UTF-8 BOM from Windows Notepad, and CRLF line endings.
+      //
+      // The line-ending normalisation is load-bearing, not cosmetic. Git
+      // stores this file with LF; a Windows checkout with core.autocrlf=true
+      // materialises it with CRLF. Without this, the same prompt hashes
+      // differently on a developer's laptop than in a Linux container, so
+      // MASTER_PROMPT_VERSION would change with the operating system and you
+      // could no longer tell "the prompt was edited" from "this ran somewhere
+      // else". Line endings are not content.
+      const withoutBom = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+      const text = withoutBom.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       const sha256 = createHash('sha256').update(text, 'utf8').digest('hex');
 
       cached = {

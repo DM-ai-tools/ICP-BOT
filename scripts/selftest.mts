@@ -8,6 +8,7 @@
  *
  *   npm run selftest
  */
+import { createHash } from 'node:crypto';
 import JSZip from 'jszip';
 
 import { masterPrompt, masterPromptInfo, masterPromptVersion } from '../src/lib/master-prompt';
@@ -85,6 +86,25 @@ check('carries the non-mixing rule', prompt.includes('Non-mixing rule'));
 check('carries the awareness calibration rules', prompt.includes('Awareness-level calibration rules'));
 check('version is content-derived', /^v1\+[0-9a-f]{12}$/.test(masterPromptVersion()), masterPromptVersion());
 check('reports where it loaded from', info.loadedFrom.includes('master_icp.md'), info.loadedFrom);
+
+// The version must depend on the prompt's CONTENT, not on which operating
+// system checked it out. A CRLF working copy on Windows and an LF checkout in
+// the Linux container have to produce the same version for the same prompt,
+// or every document stamped on Railway disagrees with every document stamped
+// locally and the version tells you nothing.
+check('loaded prompt carries no CR characters', !prompt.includes('\r'));
+const hashOf = (s: string) =>
+  createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 12);
+const asCrlf = prompt.replace(/\n/g, '\r\n');
+check(
+  'a CRLF checkout would hash identically',
+  hashOf(asCrlf.replace(/\r\n/g, '\n')) === hashOf(prompt),
+);
+check(
+  'the stored version matches the normalised content hash',
+  masterPromptVersion() === `v1+${hashOf(prompt)}`,
+  `${masterPromptVersion()} vs v1+${hashOf(prompt)}`,
+);
 
 // Every mandatory heading in the registry must exist in the prompt itself —
 // this is what stops the section index silently drifting from the prompt.

@@ -1,0 +1,25 @@
+# Normalise line endings so a Windows checkout and a Linux container agree.
+#
+# This matters beyond tidiness here: MASTER_PROMPT_VERSION is a hash of
+# prompts/master_icp.md, so a CRLF checkout on Windows and an LF checkout in
+# the Railway container would otherwise stamp generated ICPs with different
+# versions for a byte-identical prompt. The loader normalises line endings too
+# — this file keeps the working copies consistent in the first place.
+
+* text=auto eol=lf
+
+# The master prompt is loaded from disk and hashed. Pin it explicitly.
+prompts/master_icp.md text eol=lf
+Master\ Prompt.txt    text eol=lf
+
+# Leave lockfiles and generated SQL alone in the same way.
+package-lock.json     text eol=lf
+*.sql                 text eol=lf
+
+# Binaries, if any are ever added.
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.docx binary
+*.pdf  binary
+*.zip  binary
