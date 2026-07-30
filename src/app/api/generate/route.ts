@@ -240,10 +240,9 @@ export async function POST(request: Request) {
             completionTokens,
             costUsd,
             completedAt: new Date(),
-            errorMessage:
-              validated.badge === 'failed'
-                ? `These sections are still below standard after one repair pass: ${validated.failedKeys.join(', ')}`
-                : null,
+            // Only ever a human sentence about sections that genuinely matter.
+            // Cosmetic shortfalls resolve to null and are never surfaced.
+            errorMessage: validated.userMessage,
           },
         });
 

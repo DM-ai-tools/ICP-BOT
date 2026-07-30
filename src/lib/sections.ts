@@ -46,6 +46,19 @@ export interface SectionSpec {
   /** Markdown level: 1 for the title line, 2 for everything else. */
   level: 1 | 2;
   kind: SectionKind;
+  /**
+   * Whether a failure here is worth telling the user about.
+   *
+   * 'critical' sections carry the substance a strategist would actually read —
+   * if one is missing or thin, the document is genuinely weaker and that is
+   * worth a badge and a sentence.
+   *
+   * 'cosmetic' sections are structural furniture: the title line, the avatar
+   * name, the jargon line. The model legitimately formats these several ways.
+   * They still get repaired, but a failure NEVER surfaces and never marks a
+   * document failed — reporting one only teaches people to ignore warnings.
+   */
+  severity: 'critical' | 'cosmetic';
   /** Which generation pass produces it. */
   pass: 'A' | 'B' | 'C';
   /** Minimum substantive word count. 0 = structural check only. */
@@ -62,6 +75,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Title Line',
     level: 1,
     kind: 'title',
+    severity: 'cosmetic',
     pass: 'A',
     minWords: 0,
     aliases: ['icp ('],
@@ -73,6 +87,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Avatar Name',
     level: 2,
     kind: 'oneline',
+    severity: 'cosmetic',
     pass: 'A',
     minWords: 0,
     repairHint: 'FirstName LastName — "Archetype Nickname". One line only.',
@@ -82,6 +97,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Local language & jargon applied',
     level: 2,
     kind: 'oneline',
+    severity: 'cosmetic',
     pass: 'A',
     minWords: 0,
     aliases: ['local language and jargon applied', 'local language & jargon'],
@@ -92,6 +108,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Identity Snapshot',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'A',
     minWords: 120,
     repairHint:
@@ -102,6 +119,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: "Current Reality (What's happening right now)",
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'A',
     minWords: 120,
     aliases: ['current reality'],
@@ -113,6 +131,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'What They Say Out Loud',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'A',
     minWords: 120,
     repairHint:
@@ -123,6 +142,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: "What's Actually True Under the Hood",
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'A',
     minWords: 120,
     aliases: ['whats actually true under the hood', 'what is actually true under the hood'],
@@ -134,6 +154,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Goals and Desired Outcomes',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'B',
     minWords: 120,
     repairHint:
@@ -144,6 +165,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Pains, Fears, and Risks',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'B',
     minWords: 120,
     aliases: ['pains fears and risks', 'pains, fears and risks'],
@@ -155,6 +177,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Marketing Problems They Face',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'B',
     minWords: 150,
     repairHint:
@@ -165,6 +188,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: "Barriers and Uncertainties (Why they're stuck)",
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'B',
     minWords: 120,
     aliases: ['barriers and uncertainties'],
@@ -176,6 +200,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Triggers That Move Them to the Next Level',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'B',
     minWords: 120,
     repairHint:
@@ -186,6 +211,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Decision Criteria (How they choose)',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'C',
     minWords: 120,
     aliases: ['decision criteria'],
@@ -197,6 +223,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'How They Research (Channels + behavior)',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'C',
     minWords: 120,
     aliases: ['how they research'],
@@ -208,6 +235,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Objections (Top 8) + What It Really Means',
     level: 2,
     kind: 'objections',
+    severity: 'critical',
     pass: 'C',
     minWords: 160,
     aliases: ['objections'],
@@ -219,6 +247,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Market Opportunities and Positioning',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'C',
     minWords: 120,
     repairHint:
@@ -229,6 +258,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Success Stories',
     level: 2,
     kind: 'stories',
+    severity: 'critical',
     pass: 'C',
     minWords: 120,
     repairHint:
@@ -239,6 +269,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Average Deal Value of the Service',
     level: 2,
     kind: 'narrative',
+    severity: 'critical',
     pass: 'C',
     minWords: 80,
     aliases: ['average deal value'],
@@ -250,6 +281,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Qualification Checklist (Fast filters)',
     level: 2,
     kind: 'checklist',
+    severity: 'critical',
     pass: 'C',
     minWords: 60,
     aliases: ['qualification checklist'],

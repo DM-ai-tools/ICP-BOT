@@ -540,6 +540,41 @@ check(
   inspectDocument(missingDoc).find((r) => r.key === 'success_stories')?.status === 'missing',
 );
 
+// ---------------------------------------------------------------------------
+// Severity. A cosmetic shortfall must never reach the user.
+//
+// Reported from a live session: a document showed "These sections are still
+// below standard after one repair pass: title_line". The document was fine —
+// the title merely formatted differently — and the message was internal jargon
+// pointed at a strategist who could do nothing with it.
+// ---------------------------------------------------------------------------
+
+check(
+  'exactly the three furniture sections are cosmetic',
+  SECTIONS.filter((s) => s.severity === 'cosmetic')
+    .map((s) => s.key)
+    .sort()
+    .join(',') === 'avatar_name,jargon_line,title_line',
+);
+check(
+  'every section carrying substance is critical',
+  SECTIONS.filter((s) => s.severity === 'critical').length === 16,
+  String(SECTIONS.filter((s) => s.severity === 'critical').length),
+);
+
+// The exact shape that produced the complaint: a "Title Line" heading with the
+// pipe-separated detail in the body rather than in the heading itself.
+const titleInBody = goodDoc.replace(
+  '# ICP (Only Problem-Aware) — Radius | Dental SEO | $2,500/month | B2B | Melbourne | Agency | Direct Buyer | Intermediate',
+  '# Title Line\n\nICP (Only Problem-Aware) — Radius | Dental SEO | $2,500/month | B2B | Melbourne',
+);
+check(
+  'a title line in the body is not a failure',
+  inspectDocument(titleInBody).find((r) => r.key === 'title_line')?.status === 'ok',
+  inspectDocument(titleInBody).find((r) => r.key === 'title_line')?.status,
+);
+check('and the document still reads as complete', reportFor(titleInBody).badge === 'complete');
+
 // Too many checklist items must be caught.
 const longChecklist = Array.from({ length: 15 }, (_, i) => `${i + 1}. Qualifier ${i + 1}?`).join('\n');
 check(

@@ -374,7 +374,10 @@ function DocumentView({
             </div>
           )}
 
-          {doc?.errorMessage && !liveDoc?.error && (
+          {/* Shown only when a section carrying real substance fell short.
+              Cosmetic shortfalls never reach errorMessage, and a document that
+              passed does not get a warning box explaining that it passed. */}
+          {doc?.errorMessage && doc.badge === 'failed' && !liveDoc?.error && (
             <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-inferred/30 bg-inferred/[0.06] px-4 py-3">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-inferred" />
               <p className="text-[13px] leading-relaxed text-muted-foreground">

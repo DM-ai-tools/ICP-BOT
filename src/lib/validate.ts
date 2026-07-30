@@ -78,7 +78,16 @@ export function inspectDocument(markdown: string): SectionReport[] {
 
     switch (spec.kind) {
       case 'title': {
-        const looksLikeTitle = /icp\s*\(/i.test(found.heading) || found.heading.includes('|');
+        // Tolerant on purpose. The model legitimately emits this several ways:
+        // the whole pipe-separated line as the H1, or a literal "Title Line"
+        // heading with the detail underneath. Demanding a pipe *in the heading*
+        // failed the second shape, which is not actually wrong — and a title
+        // that reads slightly differently is not a defect worth reporting.
+        const looksLikeTitle =
+          /icp\s*\(/i.test(found.heading) ||
+          found.heading.includes('|') ||
+          found.body.includes('|') ||
+          words >= 8;
         return {
           key: spec.key,
           heading: spec.heading,
@@ -276,6 +285,8 @@ function insertSectionInOrder(markdown: string, key: SectionKey, body: string): 
 
 export interface ValidateAndRepairResult extends ValidationReport {
   markdown: string;
+  /** Human sentence for the UI, or null when nothing is worth surfacing. */
+  userMessage: string | null;
 }
 
 /**
@@ -315,7 +326,15 @@ export async function validateAndRepair(
     repaired: repairedKeys.includes(report.key),
   }));
 
-  const failedKeys = finalSections.filter((r) => r.status !== 'ok').map((r) => r.key);
+  // Only sections carrying real substance can fail a document. A title line
+  // that reads slightly differently is not a defect a strategist needs to be
+  // warned about, and surfacing it only teaches people to ignore warnings.
+  const stillFailing = finalSections.filter((r) => r.status !== 'ok');
+  const criticalFailures = stillFailing.filter(
+    (r) => sectionByKey(r.key).severity === 'critical',
+  );
+
+  const failedKeys = criticalFailures.map((r) => r.key);
   const ok = failedKeys.length === 0;
 
   return {
@@ -325,13 +344,36 @@ export async function validateAndRepair(
     badge: ok ? (repairedKeys.length ? 'repaired' : 'complete') : 'failed',
     repairedKeys,
     failedKeys,
+    /** Human sentence for the UI, or null when there is nothing worth saying. */
+    userMessage: criticalFailures.length ? describeFailures(criticalFailures) : null,
   };
+}
+
+/**
+ * Turn failures into something a strategist would actually want to read.
+ * Never slot keys — "title_line" means nothing to the person holding the
+ * document.
+ */
+function describeFailures(failures: SectionReport[]): string {
+  const names = failures.map((f) => f.heading);
+  const list =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+  return names.length === 1
+    ? `One section came back thinner than it should be — ${list}. Worth a read before this goes to a client.`
+    : `${names.length} sections came back thinner than they should be — ${list}. Worth a read before this goes to a client.`;
 }
 
 /** Re-inspect stored markdown without calling the model. */
 export function reportFor(markdown: string): ValidationReport {
   const sections = inspectDocument(markdown);
-  const failedKeys = sections.filter((s) => s.status !== 'ok').map((s) => s.key);
+  // Same rule as validateAndRepair: only substantive sections can fail a
+  // document, so the two can never disagree about what 'complete' means.
+  const failedKeys = sections
+    .filter((s) => s.status !== 'ok' && sectionByKey(s.key).severity === 'critical')
+    .map((s) => s.key);
   return {
     sections,
     ok: failedKeys.length === 0,
