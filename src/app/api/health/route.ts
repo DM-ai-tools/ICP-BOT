@@ -1,34 +1,46 @@
 /**
  * Railway healthcheck target.
  *
- * Returns 200 as soon as the process can serve, and reports *why* it is
- * unhealthy rather than failing opaquely. The database is probed but a slow or
- * still-starting Postgres does not fail the check — the app boots, serves, and
- * reports degraded, which is far easier to debug than a deploy that never
- * goes live.
+ * Always returns 200 as long as the process can serve, and reports *why* it is
+ * degraded. That distinction matters: a healthcheck that 5xx's because one
+ * environment variable is unset tells you nothing except "it's broken", and you
+ * spend the retry window guessing. This one names the fault.
+ *
+ * Nothing in here may throw. Every dependency is probed defensively.
  */
 import { NextResponse } from 'next/server';
 import { envProblems } from '@/lib/env';
 import { masterPromptInfo } from '@/lib/master-prompt';
-import { prisma } from '@/lib/db';
+import { probeDatabase } from '@/lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const problems = envProblems();
+  const problems: string[] = [];
 
-  let database: 'ok' | 'unreachable' = 'unreachable';
   try {
-    await prisma.$queryRaw`SELECT 1`;
-    database = 'ok';
-  } catch {
-    problems.push('database unreachable');
+    problems.push(...envProblems());
+  } catch (err) {
+    problems.push(`environment unreadable: ${(err as Error).message}`);
   }
 
-  let prompt: { version: string; sha256: string; bytes: number; loadedFrom: string } | null = null;
+  let database: 'ok' | 'unreachable' = 'unreachable';
+  let databaseDetail: string | null = null;
   try {
-    prompt = masterPromptInfo();
+    const probe = await probeDatabase();
+    database = probe.ok ? 'ok' : 'unreachable';
+    databaseDetail = probe.detail;
+    if (!probe.ok) problems.push(`database: ${probe.detail ?? 'unreachable'}`);
+  } catch (err) {
+    databaseDetail = (err as Error).message;
+    problems.push(`database: ${databaseDetail}`);
+  }
+
+  let prompt: { version: string; sha256: string; bytes: number } | null = null;
+  try {
+    const info = masterPromptInfo();
+    prompt = { version: info.version, sha256: info.sha256.slice(0, 16), bytes: info.bytes };
   } catch (err) {
     problems.push(`master prompt not loadable: ${(err as Error).message}`);
   }
@@ -38,17 +50,15 @@ export async function GET() {
       status: problems.length === 0 ? 'ok' : 'degraded',
       service: 'icp-builder',
       database,
-      masterPrompt: prompt
-        ? {
-            version: prompt.version,
-            sha256: prompt.sha256.slice(0, 16),
-            bytes: prompt.bytes,
-          }
-        : null,
+      databaseDetail,
+      masterPrompt: prompt,
       problems,
+      node: process.version,
       uptimeSeconds: Math.round(process.uptime()),
       timestamp: new Date().toISOString(),
     },
+    // Deliberately 200 even when degraded: the container is up and serving, and
+    // a readable diagnosis beats a healthcheck loop that reveals nothing.
     { status: 200, headers: { 'Cache-Control': 'no-store' } },
   );
 }
