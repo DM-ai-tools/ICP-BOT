@@ -187,13 +187,57 @@ export async function exportAwarenessMapDocx(
 // Zip
 // ---------------------------------------------------------------------------
 
+export type ExportFormat = 'docx' | 'pdf' | 'md';
+
+export const ALL_FORMATS: ExportFormat[] = ['docx', 'pdf', 'md'];
+
+/** documentId → which formats to include for that scenario. */
+export type ZipSelection = Map<string, Set<ExportFormat>>;
+
+const FORMAT_CODE: Record<string, ExportFormat> = { d: 'docx', p: 'pdf', m: 'md' };
+
+/**
+ * Parse the compact selection param: `docId:dpm,otherId:p`
+ *
+ * Compact because a full matrix of cuids and format names would push the query
+ * string past what some proxies are happy to forward. Absent or unparseable
+ * means "everything", which keeps old links working.
+ */
+export function parseZipSelection(param: string | null): ZipSelection | null {
+  if (!param?.trim()) return null;
+
+  const selection: ZipSelection = new Map();
+  for (const entry of param.split(',')) {
+    const [id, codes] = entry.split(':');
+    if (!id || !codes) continue;
+
+    const formats = new Set<ExportFormat>();
+    for (const code of codes) {
+      const format = FORMAT_CODE[code];
+      if (format) formats.add(format);
+    }
+    if (formats.size) selection.set(id.trim(), formats);
+  }
+
+  return selection.size ? selection : null;
+}
+
 export async function exportZip(
   run: ExportRun,
   serviceIndex?: number,
+  selection?: ZipSelection | null,
 ): Promise<{ buffer: Buffer; filename: string }> {
   const slots = slotsOf(run);
-  const docs = exportableDocuments(run, serviceIndex);
-  if (!docs.length) throw new Error('There are no generated documents to export yet.');
+  const all = exportableDocuments(run, serviceIndex);
+  if (!all.length) throw new Error('There are no generated documents to export yet.');
+
+  // A selection narrows both which scenarios appear and which formats each one
+  // gets. No selection means everything, which is the default the UI ships with.
+  const wants = (doc: ExportDoc, format: ExportFormat) =>
+    !selection || (selection.get(doc.id)?.has(format) ?? false);
+
+  const docs = selection ? all.filter((doc) => selection.has(doc.id)) : all;
+  if (!docs.length) throw new Error('Nothing was selected to download.');
 
   const zip = new JSZip();
 
@@ -205,15 +249,25 @@ export async function exportZip(
     // A failed map must not cost the individual files.
   }
 
-  const docxFolder = zip.folder('scenarios-docx');
-  const mdFolder = zip.folder('scenarios-markdown');
+  const needs = (format: ExportFormat) => docs.some((doc) => wants(doc, format));
+
+  const docxFolder = needs('docx') ? zip.folder('scenarios-docx') : null;
+  const pdfFolder = needs('pdf') ? zip.folder('scenarios-pdf') : null;
+  const mdFolder = needs('md') ? zip.folder('scenarios-markdown') : null;
 
   for (const doc of docs) {
-    const single = await exportSingleDocx(run, doc);
-    docxFolder?.file(single.filename, single.buffer);
-
-    const markdown = exportSingleMarkdown(run, doc);
-    mdFolder?.file(markdown.filename, markdown.body);
+    if (wants(doc, 'docx')) {
+      const single = await exportSingleDocx(run, doc);
+      docxFolder?.file(single.filename, single.buffer);
+    }
+    if (wants(doc, 'pdf')) {
+      const pdf = await exportSinglePdf(run, doc);
+      pdfFolder?.file(pdf.filename, pdf.buffer);
+    }
+    if (wants(doc, 'md')) {
+      const markdown = exportSingleMarkdown(run, doc);
+      mdFolder?.file(markdown.filename, markdown.body);
+    }
   }
 
   const comparison = run.comparisons.find(
@@ -236,14 +290,15 @@ export async function exportZip(
       '',
       'Contents',
       '  awareness-map.docx      Cover, comparison table and every scenario as a chapter with a table of contents.',
-      '  scenarios-docx/         Each awareness stage as a standalone Word file.',
-      '  scenarios-markdown/     The same content as raw markdown.',
+      ...(docxFolder ? ['  scenarios-docx/         Each awareness stage as a standalone Word file.'] : []),
+      ...(pdfFolder ? ['  scenarios-pdf/          The same content as PDF, for sending read-only.'] : []),
+      ...(mdFolder ? ['  scenarios-markdown/     The same content as raw markdown.'] : []),
       '',
       'Scenarios included:',
-      ...docs.map(
-        (doc) =>
-          `  - ${awarenessLabel(doc.scenario as AwarenessKey)} (${doc.badge ?? 'unknown'})`,
-      ),
+      ...docs.map((doc) => {
+        const formats = ALL_FORMATS.filter((f) => wants(doc, f));
+        return `  - ${awarenessLabel(doc.scenario as AwarenessKey)} (${doc.badge ?? 'unknown'}) — ${formats.join(', ')}`;
+      }),
       '',
       'Word headings use real Heading 1/2/3 styles, so you can apply your own',
       'template and the navigation pane and table of contents will follow.',

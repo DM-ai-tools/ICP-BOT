@@ -34,6 +34,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/primitives';
+import { ExportMenu } from '@/components/export-menu';
 import { cn } from '@/lib/utils';
 
 export interface LiveDoc {
@@ -549,95 +550,5 @@ function CopyButton({
       {copied ? <Check /> : <Copy />}
       {copied ? 'Copied' : label}
     </Button>
-  );
-}
-
-export function ExportMenu({ state }: { state: RunState }) {
-  const ready = state.documents.filter((d) =>
-    ['complete', 'repaired', 'failed'].includes(d.status),
-  );
-  const [open, setOpen] = React.useState(false);
-
-  if (!ready.length) return null;
-
-  const base = `/api/export?runId=${encodeURIComponent(state.id)}`;
-
-  return (
-    <div className="relative shrink-0">
-      <Button variant="outline" size="sm" onClick={() => setOpen((v) => !v)}>
-        <Download />
-        Download
-      </Button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} aria-hidden="true" />
-          <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border border-border bg-popover p-1.5 shadow-xl animate-slide-down">
-            <p className="px-2.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Everything
-            </p>
-            <ExportLink
-              href={`${base}&format=map-docx`}
-              icon={<Layers className="h-4 w-4" />}
-              title="Awareness map (DOCX)"
-              subtitle="Cover, comparison table, every scenario as a chapter"
-            />
-            <ExportLink
-              href={`${base}&format=zip`}
-              icon={<Download className="h-4 w-4" />}
-              title="Download all (ZIP)"
-              subtitle="Map, individual Word files and raw markdown"
-            />
-
-            <p className="mt-1.5 px-2.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Single scenario
-            </p>
-            <div className="max-h-64 overflow-y-auto">
-              {ready.map((doc) => (
-                <div key={doc.id} className="px-2.5 py-1.5">
-                  <p className="mb-1 truncate text-[12.5px] font-medium">{doc.awarenessLabel}</p>
-                  <div className="flex gap-1">
-                    {(['docx', 'pdf', 'md'] as const).map((format) => (
-                      <a
-                        key={format}
-                        href={`${base}&documentId=${doc.id}&format=${format}`}
-                        className="rounded-md border border-border px-2 py-0.5 text-[11px] font-medium uppercase text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                      >
-                        {format}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function ExportLink({
-  href,
-  icon,
-  title,
-  subtitle,
-}: {
-  href: string;
-  icon: React.ReactNode;
-  title: string;
-  subtitle: string;
-}) {
-  return (
-    <a
-      href={href}
-      className="flex items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors hover:bg-secondary"
-    >
-      <span className="mt-0.5 text-muted-foreground">{icon}</span>
-      <span className="min-w-0">
-        <span className="block text-[13px] font-medium">{title}</span>
-        <span className="block text-[11.5px] leading-snug text-muted-foreground">{subtitle}</span>
-      </span>
-    </a>
   );
 }

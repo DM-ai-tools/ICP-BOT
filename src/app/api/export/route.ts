@@ -16,6 +16,7 @@ import {
   exportZip,
   fileResponse,
   loadRunForExport,
+  parseZipSelection,
 } from '@/lib/export-service';
 import { errorResponse } from '@/lib/sse';
 
@@ -46,9 +47,12 @@ export async function GET(request: Request) {
     }
 
     if (format === 'zip') {
+      // `include=<docId>:<dpm>,…` narrows the bundle to exactly the
+      // scenario/format cells the user left selected. Absent means everything.
       const { buffer, filename } = await exportZip(
         run,
         Number.isFinite(serviceIndex) ? serviceIndex : undefined,
+        parseZipSelection(url.searchParams.get('include')),
       );
       return fileResponse(buffer, filename, 'zip');
     }
