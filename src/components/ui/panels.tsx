@@ -1,14 +1,23 @@
 'use client';
 
 /**
- * Panel manipulation: resizable splits and a detachable floating panel.
+ * Panel manipulation: resizable splits, and a floating panel with a real
+ * window-manager's behaviour — drag-to-dock, spring settle, maximise,
+ * escape-to-cancel.
  *
- * The single most important decision in here is that a drag NEVER goes through
- * React state. Every pointermove writes straight to the element's inline style
- * inside a rAF, and state is committed once on release. Routing 120 pointer
- * events a second through a re-render of a subtree containing a streaming
- * markdown document is exactly how a resize handle acquires that half-frame of
- * lag that makes an interface feel cheap.
+ * Two rules govern everything in this file.
+ *
+ * ONE: a drag never goes through React state. Every pointermove writes straight
+ * to the element's inline style inside a rAF, and state is committed once on
+ * release. Routing 120 pointer events a second through a re-render of a subtree
+ * containing a streaming markdown document is exactly how a resize handle
+ * acquires the half-frame of lag that makes an interface feel cheap.
+ *
+ * TWO: direct manipulation is 1:1, everything else is sprung. While a finger is
+ * down the panel tracks the pointer exactly — a spring here would feel like
+ * dragging something through treacle. The moment the finger lifts and the panel
+ * has somewhere to *go* (a snap point, a dock, a maximise), it springs. That
+ * split is the whole difference between "animated" and "physical".
  *
  * Everything persists per panel id, so an arrangement survives a reload.
  */
@@ -39,6 +48,20 @@ function save<T>(id: string, value: T): void {
   }
 }
 
+/** Wipe every stored arrangement. Backs the "reset layout" command. */
+export function clearPanelLayout(): void {
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (key?.startsWith(NS)) doomed.push(key);
+    }
+    doomed.forEach((key) => window.localStorage.removeItem(key));
+  } catch {
+    /* nothing to do */
+  }
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
@@ -64,6 +87,79 @@ function setDragging(on: boolean, cursor: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Spring
+// ---------------------------------------------------------------------------
+
+export interface SpringConfig {
+  stiffness: number;
+  damping: number;
+  mass: number;
+}
+
+/** Settles in ~340ms with a whisper of overshoot. Used for release and dock. */
+const SETTLE: SpringConfig = { stiffness: 210, damping: 24, mass: 1 };
+/** Tighter, no overshoot. Used when a panel snaps back to a bound. */
+const SNAP_BACK: SpringConfig = { stiffness: 260, damping: 30, mass: 1 };
+
+/**
+ * Integrate a 0→1 progress spring and hand each frame to the caller.
+ *
+ * A single progress value drives every dimension rather than one spring per
+ * axis, so width and x can never desynchronise mid-flight — which is what
+ * produces that subtle shearing wobble in naive implementations.
+ *
+ * Semi-implicit Euler with fixed substeps: stable regardless of frame rate, so
+ * a dropped frame slows the animation rather than exploding it.
+ */
+function runSpring(
+  onProgress: (t: number) => void,
+  onDone: () => void,
+  config: SpringConfig = SETTLE,
+): () => void {
+  if (typeof window === 'undefined') {
+    onProgress(1);
+    onDone();
+    return () => {};
+  }
+
+  // Respect the OS setting. Physics is expression, not information.
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    onProgress(1);
+    onDone();
+    return () => {};
+  }
+
+  let value = 0;
+  let velocity = 0;
+  let last = performance.now();
+  let frame = requestAnimationFrame(step);
+
+  function step(now: number) {
+    const dt = Math.min(0.064, (now - last) / 1000);
+    last = now;
+
+    const substeps = Math.max(1, Math.ceil(dt / 0.004));
+    const h = dt / substeps;
+    for (let i = 0; i < substeps; i++) {
+      const force = config.stiffness * (1 - value) - config.damping * velocity;
+      velocity += (force / config.mass) * h;
+      value += velocity * h;
+    }
+
+    if (Math.abs(1 - value) < 0.0015 && Math.abs(velocity) < 0.02) {
+      onProgress(1);
+      onDone();
+      return;
+    }
+
+    onProgress(value);
+    frame = requestAnimationFrame(step);
+  }
+
+  return () => cancelAnimationFrame(frame);
+}
+
+// ---------------------------------------------------------------------------
 // Resizable split
 // ---------------------------------------------------------------------------
 
@@ -82,6 +178,8 @@ export interface SplitOptions {
 export interface SplitControls {
   size: number;
   dragging: boolean;
+  /** True while the width is being sprung, so transitions stay out of the way. */
+  settling: boolean;
   /** Attach to the element whose width is being controlled. */
   panelRef: React.RefObject<HTMLDivElement | null>;
   /** Spread onto <SplitHandle>. */
@@ -94,7 +192,7 @@ export interface SplitControls {
     'aria-valuemax': number;
   };
   reset: () => void;
-  setSize: (next: number) => void;
+  setSize: (next: number, animate?: boolean) => void;
 }
 
 export function useSplit(options: SplitOptions): SplitControls {
@@ -102,9 +200,11 @@ export function useSplit(options: SplitOptions): SplitControls {
 
   const [size, setSizeState] = React.useState(initial);
   const [dragging, setDragging_] = React.useState(false);
+  const [settling, setSettling] = React.useState(false);
   const panelRef = React.useRef<HTMLDivElement | null>(null);
 
   const frame = React.useRef<number | null>(null);
+  const cancelSpring = React.useRef<(() => void) | null>(null);
   const live = React.useRef(initial);
   const start = React.useRef({ pointer: 0, size: 0 });
 
@@ -116,6 +216,18 @@ export function useSplit(options: SplitOptions): SplitControls {
     setSizeState(next);
   }, [id, initial, min, max]);
 
+  const paintWidth = React.useCallback((value: number) => {
+    if (panelRef.current) panelRef.current.style.width = `${Math.round(value)}px`;
+  }, []);
+
+  const paint = React.useCallback(() => {
+    if (frame.current !== null) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      paintWidth(live.current);
+    });
+  }, [paintWidth]);
+
   const commit = React.useCallback(
     (next: number) => {
       const clamped = clamp(next, min, max);
@@ -126,48 +238,86 @@ export function useSplit(options: SplitOptions): SplitControls {
     [id, min, max],
   );
 
-  const paint = React.useCallback((next: number) => {
-    if (frame.current !== null) return;
-    frame.current = requestAnimationFrame(() => {
-      frame.current = null;
-      if (panelRef.current) panelRef.current.style.width = `${live.current}px`;
-    });
-    void next;
-  }, []);
+  /** Spring the width to a target — used by keyboard, double-click and reset. */
+  const springTo = React.useCallback(
+    (target: number, config: SpringConfig = SETTLE) => {
+      cancelSpring.current?.();
+      const from = live.current;
+      const to = clamp(target, min, max);
+      if (Math.abs(to - from) < 0.5) {
+        commit(to);
+        return;
+      }
+
+      setSettling(true);
+      cancelSpring.current = runSpring(
+        (t) => paintWidth(from + (to - from) * t),
+        () => {
+          cancelSpring.current = null;
+          setSettling(false);
+          commit(to);
+        },
+        config,
+      );
+    },
+    [min, max, commit, paintWidth],
+  );
 
   const onPointerDown = React.useCallback(
     (event: React.PointerEvent) => {
       if (!enabled || event.button !== 0) return;
       event.preventDefault();
+      cancelSpring.current?.();
+      setSettling(false);
 
       const handle = event.currentTarget as HTMLElement;
       handle.setPointerCapture(event.pointerId);
 
       start.current = { pointer: event.clientX, size: live.current };
+      const origin = live.current;
       setDragging_(true);
       setDragging(true, 'col-resize');
+
+      let cancelled = false;
 
       const move = (e: PointerEvent) => {
         const delta = e.clientX - start.current.pointer;
         const raw = side === 'right' ? start.current.size + delta : start.current.size - delta;
         live.current = applySnap(clamp(raw, min, max), snap);
-        paint(live.current);
+        paint();
       };
 
-      const up = () => {
+      const finish = () => {
         handle.removeEventListener('pointermove', move);
         handle.removeEventListener('pointerup', up);
         handle.removeEventListener('pointercancel', up);
+        window.removeEventListener('keydown', onKey);
         setDragging_(false);
         setDragging(false, '');
+      };
+
+      const up = () => {
+        finish();
+        if (cancelled) return;
         commit(live.current);
+      };
+
+      // Escape abandons the gesture and springs back to where it started.
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape') return;
+        cancelled = true;
+        e.preventDefault();
+        finish();
+        live.current = origin;
+        springTo(origin, SNAP_BACK);
       };
 
       handle.addEventListener('pointermove', move);
       handle.addEventListener('pointerup', up);
       handle.addEventListener('pointercancel', up);
+      window.addEventListener('keydown', onKey);
     },
-    [enabled, side, min, max, snap, paint, commit],
+    [enabled, side, min, max, snap, paint, commit, springTo],
   );
 
   const onKeyDown = React.useCallback(
@@ -175,28 +325,30 @@ export function useSplit(options: SplitOptions): SplitControls {
       const step = event.shiftKey ? 48 : 12;
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
-        commit(live.current + (side === 'right' ? -step : step));
+        springTo(live.current + (side === 'right' ? -step : step));
       } else if (event.key === 'ArrowRight') {
         event.preventDefault();
-        commit(live.current + (side === 'right' ? step : -step));
+        springTo(live.current + (side === 'right' ? step : -step));
       } else if (event.key === 'Home') {
         event.preventDefault();
-        commit(min);
+        springTo(min);
       } else if (event.key === 'End') {
         event.preventDefault();
-        commit(max);
+        springTo(max);
       } else if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        commit(initial);
+        springTo(initial);
       }
     },
-    [commit, side, min, max, initial],
+    [springTo, side, min, max, initial],
   );
 
   // Keep the inline width honest when state changes outside a drag.
   React.useEffect(() => {
-    if (!dragging && panelRef.current) panelRef.current.style.width = `${size}px`;
-  }, [size, dragging]);
+    if (!dragging && !settling && panelRef.current) {
+      panelRef.current.style.width = `${size}px`;
+    }
+  }, [size, dragging, settling]);
 
   // A window that shrinks must not leave a panel wider than the viewport.
   React.useEffect(() => {
@@ -211,6 +363,7 @@ export function useSplit(options: SplitOptions): SplitControls {
   React.useEffect(
     () => () => {
       if (frame.current !== null) cancelAnimationFrame(frame.current);
+      cancelSpring.current?.();
     },
     [],
   );
@@ -218,23 +371,24 @@ export function useSplit(options: SplitOptions): SplitControls {
   return {
     size,
     dragging,
+    settling,
     panelRef,
     handleProps: {
       onPointerDown,
-      onDoubleClick: () => commit(initial),
+      onDoubleClick: () => springTo(initial),
       onKeyDown,
       'aria-valuenow': Math.round(size),
       'aria-valuemin': min,
       'aria-valuemax': max,
     },
-    reset: () => commit(initial),
-    setSize: commit,
+    reset: () => springTo(initial),
+    setSize: (next, animate = true) => (animate ? springTo(next) : commit(next)),
   };
 }
 
 /**
- * The handle itself. Two pixels of visible line, twelve pixels of hit area —
- * a resize target you have to aim for is a resize target people stop using.
+ * The handle itself. One pixel of visible line, twelve pixels of hit area — a
+ * resize target you have to aim for is a resize target people stop using.
  */
 export function SplitHandle({
   dragging,
@@ -259,28 +413,35 @@ export function SplitHandle({
       )}
       {...props}
     >
-      {/* The visible rule. */}
+      {/* The visible rule. Thickens rather than only recolouring on hover — a
+          1px line changing hue is far below the threshold of noticing. */}
       <span
         aria-hidden
         className={cn(
-          'pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors duration-fast',
-          dragging ? 'bg-accent' : 'bg-line group-hover:bg-line-strong',
+          'pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 rounded-full',
+          'transition-[background-color,width] duration-fast ease-out',
+          dragging ? 'w-[2px] bg-accent' : 'w-px bg-line group-hover:w-[2px] group-hover:bg-line-strong',
         )}
       />
-      {/* Grip dots — the discoverability affordance. Invisible until the
-          pointer is near, so the chrome stays quiet at rest. */}
+      {/* Grip dots — the discoverability affordance. Invisible until the pointer
+          is near, so the chrome stays quiet at rest. */}
       <span
         aria-hidden
         className={cn(
           'pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col gap-[3px]',
-          'opacity-0 transition-opacity duration-base group-hover:opacity-100 group-focus-visible:opacity-100',
-          dragging && 'opacity-100',
+          'transition-opacity duration-base ease-out',
+          dragging
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
         )}
       >
         {[0, 1, 2].map((i) => (
           <span
             key={i}
-            className={cn('size-[3px] rounded-full', dragging ? 'bg-accent' : 'bg-fg-subtle')}
+            className={cn(
+              'size-[3px] rounded-full transition-colors duration-fast',
+              dragging ? 'bg-accent' : 'bg-fg-subtle',
+            )}
           />
         ))}
       </span>
@@ -304,12 +465,19 @@ export interface FloatRect {
   h: number;
 }
 
+/** Where a drag would land if released now. */
+export type DockTarget = 'left' | 'right' | 'maximize' | null;
+
 export interface FloatOptions {
   id: string;
   initial: FloatRect;
   minW?: number;
   minH?: number;
   enabled?: boolean;
+  /** Fired when a drag is released inside a dock zone. */
+  onDock?: (side: 'left' | 'right') => void;
+  /** Height of fixed chrome above the panel, so maximise does not sit under it. */
+  topInset?: number;
 }
 
 type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -325,18 +493,27 @@ const EDGE_CURSOR: Record<Edge, string> = {
   se: 'nwse-resize',
 };
 
+/** How close to an edge the POINTER must be for a dock to arm. */
+const DOCK_ZONE = 76;
+
 let zCounter = 40;
 
 export function useFloating(options: FloatOptions) {
-  const { id, initial, minW = 280, minH = 220, enabled = true } = options;
+  const { id, initial, minW = 280, minH = 220, enabled = true, onDock, topInset = 0 } = options;
 
   const [rect, setRect] = React.useState<FloatRect>(initial);
   const [z, setZ] = React.useState(zCounter);
   const [busy, setBusy] = React.useState<null | 'move' | 'resize'>(null);
+  const [settling, setSettling] = React.useState(false);
+  const [dockHint, setDockHint] = React.useState<DockTarget>(null);
+  const [maximized, setMaximized] = React.useState(false);
 
   const ref = React.useRef<HTMLDivElement | null>(null);
   const live = React.useRef<FloatRect>(initial);
   const frame = React.useRef<number | null>(null);
+  const cancelSpring = React.useRef<(() => void) | null>(null);
+  /** The rect to return to when un-maximising. */
+  const restoreRect = React.useRef<FloatRect | null>(null);
 
   React.useEffect(() => {
     const stored = load(id, initial);
@@ -345,18 +522,21 @@ export function useFloating(options: FloatOptions) {
     setRect(constrained);
   }, [id, initial, minW, minH]);
 
+  const write = React.useCallback((r: FloatRect) => {
+    const node = ref.current;
+    if (!node) return;
+    node.style.transform = `translate3d(${Math.round(r.x)}px, ${Math.round(r.y)}px, 0)`;
+    node.style.width = `${Math.round(r.w)}px`;
+    node.style.height = `${Math.round(r.h)}px`;
+  }, []);
+
   const paint = React.useCallback(() => {
     if (frame.current !== null) return;
     frame.current = requestAnimationFrame(() => {
       frame.current = null;
-      const node = ref.current;
-      if (!node) return;
-      const { x, y, w, h } = live.current;
-      node.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
-      node.style.width = `${Math.round(w)}px`;
-      node.style.height = `${Math.round(h)}px`;
+      write(live.current);
     });
-  }, []);
+  }, [write]);
 
   const commit = React.useCallback(() => {
     const next = constrain(live.current, minW, minH);
@@ -365,10 +545,70 @@ export function useFloating(options: FloatOptions) {
     save(id, next);
   }, [id, minW, minH]);
 
+  /** Spring the whole rect to a target and commit when it lands. */
+  const springTo = React.useCallback(
+    (target: FloatRect, config: SpringConfig = SETTLE) => {
+      cancelSpring.current?.();
+      const from = { ...live.current };
+      const to = constrain(target, minW, minH);
+
+      const distance =
+        Math.abs(to.x - from.x) + Math.abs(to.y - from.y) +
+        Math.abs(to.w - from.w) + Math.abs(to.h - from.h);
+
+      if (distance < 1) {
+        live.current = to;
+        commit();
+        return;
+      }
+
+      setSettling(true);
+      cancelSpring.current = runSpring(
+        (t) => {
+          const frameRect = {
+            x: from.x + (to.x - from.x) * t,
+            y: from.y + (to.y - from.y) * t,
+            w: from.w + (to.w - from.w) * t,
+            h: from.h + (to.h - from.h) * t,
+          };
+          live.current = frameRect;
+          write(frameRect);
+        },
+        () => {
+          cancelSpring.current = null;
+          setSettling(false);
+          live.current = to;
+          commit();
+        },
+        config,
+      );
+    },
+    [minW, minH, commit, write],
+  );
+
   const raise = React.useCallback(() => {
     zCounter += 1;
     setZ(zCounter);
   }, []);
+
+  const maximizedRect = React.useCallback((): FloatRect => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    return { x: 16, y: topInset + 12, w: vw - 32, h: vh - topInset - 28 };
+  }, [topInset]);
+
+  const toggleMaximize = React.useCallback(() => {
+    if (maximized) {
+      const target = restoreRect.current ?? initial;
+      restoreRect.current = null;
+      setMaximized(false);
+      springTo(target);
+    } else {
+      restoreRect.current = { ...live.current };
+      setMaximized(true);
+      springTo(maximizedRect());
+    }
+  }, [maximized, initial, springTo, maximizedRect]);
 
   /** Drag by the header. */
   const onMovePointerDown = React.useCallback(
@@ -378,14 +618,39 @@ export function useFloating(options: FloatOptions) {
       if ((event.target as HTMLElement).closest('button,a,input,[data-no-drag]')) return;
 
       event.preventDefault();
+      cancelSpring.current?.();
+      setSettling(false);
       raise();
 
       const handle = event.currentTarget as HTMLElement;
       handle.setPointerCapture(event.pointerId);
 
-      const origin = { px: event.clientX, py: event.clientY, ...live.current };
+      // Dragging a maximised panel restores it, sized so the grab point stays
+      // under the cursor proportionally — the behaviour every OS window manager
+      // has, and its absence is felt immediately.
+      let origin = { px: event.clientX, py: event.clientY, ...live.current };
+      if (maximized) {
+        const restore = restoreRect.current ?? initial;
+        const ratio = (event.clientX - live.current.x) / live.current.w;
+        const next: FloatRect = {
+          w: restore.w,
+          h: restore.h,
+          x: event.clientX - restore.w * ratio,
+          y: Math.max(topInset + 8, event.clientY - 18),
+        };
+        setMaximized(false);
+        restoreRect.current = null;
+        live.current = constrain(next, minW, minH);
+        write(live.current);
+        origin = { px: event.clientX, py: event.clientY, ...live.current };
+      }
+
+      const startRect = { ...live.current };
       setBusy('move');
       setDragging(true, 'grabbing');
+
+      let hint: DockTarget = null;
+      let cancelled = false;
 
       const move = (e: PointerEvent) => {
         const vw = window.innerWidth;
@@ -394,34 +659,92 @@ export function useFloating(options: FloatOptions) {
         let x = origin.x + (e.clientX - origin.px);
         let y = origin.y + (e.clientY - origin.py);
 
-        // Snap to the viewport's own edges and centre line.
-        x = applySnap(x, [16, vw - origin.w - 16, (vw - origin.w) / 2], 12);
-        y = applySnap(y, [16, vh - origin.h - 16], 12);
+        // Dock arming is driven by the POINTER, not the panel's edge. Using the
+        // panel edge means a wide panel arms a dock while the cursor is still
+        // near the middle of the screen, which feels like the app guessing.
+        const nextHint: DockTarget =
+          e.clientX <= DOCK_ZONE
+            ? 'left'
+            : e.clientX >= vw - DOCK_ZONE
+              ? 'right'
+              : e.clientY <= topInset + 8
+                ? 'maximize'
+                : null;
+
+        if (nextHint !== hint) {
+          hint = nextHint;
+          setDockHint(nextHint);
+        }
+
+        // Free-drag snapping to the viewport's own edges and centre line.
+        if (!nextHint) {
+          x = applySnap(x, [16, vw - origin.w - 16, (vw - origin.w) / 2], 12);
+          y = applySnap(y, [topInset + 12, vh - origin.h - 16], 12);
+        }
 
         // A panel can be pushed against an edge but never past it — losing a
-        // panel off-screen with no way to get it back is unforgivable.
+        // panel off-screen with no way to retrieve it is unforgivable.
         live.current = {
           ...live.current,
           x: clamp(x, -origin.w + 88, vw - 88),
-          y: clamp(y, 0, vh - 44),
+          y: clamp(y, topInset, vh - 44),
         };
         paint();
       };
 
-      const up = () => {
+      const finish = () => {
         handle.removeEventListener('pointermove', move);
         handle.removeEventListener('pointerup', up);
         handle.removeEventListener('pointercancel', up);
+        window.removeEventListener('keydown', onKey);
         setBusy(null);
         setDragging(false, '');
+        setDockHint(null);
+      };
+
+      const up = () => {
+        const landed = hint;
+        finish();
+        if (cancelled) return;
+
+        if (landed === 'maximize') {
+          restoreRect.current = startRect;
+          setMaximized(true);
+          springTo(maximizedRect());
+          return;
+        }
+        if (landed === 'left' || landed === 'right') {
+          // Hand over immediately. Springing into the edge and *then* unmounting
+          // mid-flight is two animations fighting for the same 300ms; the
+          // preview has already shown where this lands, so the docked panel
+          // appearing is the continuity. Direct manipulation commits at once.
+          //
+          // The pre-dock rect is kept so undocking later returns the panel to
+          // where the user last had it, not to a factory default.
+          commit();
+          onDock?.(landed);
+          return;
+        }
         commit();
+      };
+
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape') return;
+        cancelled = true;
+        e.preventDefault();
+        finish();
+        springTo(startRect, SNAP_BACK);
       };
 
       handle.addEventListener('pointermove', move);
       handle.addEventListener('pointerup', up);
       handle.addEventListener('pointercancel', up);
+      window.addEventListener('keydown', onKey);
     },
-    [enabled, raise, paint, commit],
+    [
+      enabled, raise, paint, commit, springTo, onDock, maximized,
+      initial, minW, minH, topInset, write, maximizedRect,
+    ],
   );
 
   /** Resize from any edge or corner. */
@@ -431,14 +754,19 @@ export function useFloating(options: FloatOptions) {
         if (!enabled || event.button !== 0) return;
         event.preventDefault();
         event.stopPropagation();
+        cancelSpring.current?.();
+        setSettling(false);
         raise();
 
         const handle = event.currentTarget as HTMLElement;
         handle.setPointerCapture(event.pointerId);
 
         const origin = { px: event.clientX, py: event.clientY, ...live.current };
+        const startRect = { ...live.current };
         setBusy('resize');
         setDragging(true, EDGE_CURSOR[edge]);
+
+        let cancelled = false;
 
         const move = (e: PointerEvent) => {
           const dx = e.clientX - origin.px;
@@ -448,8 +776,8 @@ export function useFloating(options: FloatOptions) {
           if (edge.includes('e')) w = origin.w + dx;
           if (edge.includes('s')) h = origin.h + dy;
           if (edge.includes('w')) {
-            // Dragging the west edge moves the origin as well as the width,
-            // and must stop moving once the minimum is reached.
+            // Dragging the west edge moves the origin as well as the width, and
+            // must stop moving once the minimum is reached.
             w = clamp(origin.w - dx, minW, Infinity);
             x = origin.x + (origin.w - w);
           }
@@ -458,42 +786,65 @@ export function useFloating(options: FloatOptions) {
             y = origin.y + (origin.h - h);
           }
 
-          live.current = constrain({ x, y, w, h }, minW, minH);
+          live.current = constrain({ x, y, w, h }, minW, minH, topInset);
           paint();
         };
 
-        const up = () => {
+        const finish = () => {
           handle.removeEventListener('pointermove', move);
           handle.removeEventListener('pointerup', up);
           handle.removeEventListener('pointercancel', up);
+          window.removeEventListener('keydown', onKey);
           setBusy(null);
           setDragging(false, '');
+        };
+
+        const up = () => {
+          finish();
+          if (cancelled) return;
+          if (maximized) setMaximized(false);
           commit();
+        };
+
+        const onKey = (e: KeyboardEvent) => {
+          if (e.key !== 'Escape') return;
+          cancelled = true;
+          e.preventDefault();
+          finish();
+          springTo(startRect, SNAP_BACK);
         };
 
         handle.addEventListener('pointermove', move);
         handle.addEventListener('pointerup', up);
         handle.addEventListener('pointercancel', up);
+        window.addEventListener('keydown', onKey);
       },
     }),
-    [enabled, raise, paint, commit, minW, minH],
+    [enabled, raise, paint, commit, springTo, minW, minH, maximized, topInset],
   );
 
   // Keep a floating panel reachable when the window shrinks under it.
   React.useEffect(() => {
     const onResize = () => {
-      const next = constrain(live.current, minW, minH);
+      if (maximized) {
+        live.current = maximizedRect();
+        setRect(live.current);
+        write(live.current);
+        return;
+      }
+      const next = constrain(live.current, minW, minH, topInset);
       live.current = next;
       setRect(next);
-      paint();
+      write(next);
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [minW, minH, paint]);
+  }, [minW, minH, write, maximized, maximizedRect, topInset]);
 
   React.useEffect(
     () => () => {
       if (frame.current !== null) cancelAnimationFrame(frame.current);
+      cancelSpring.current?.();
     },
     [],
   );
@@ -502,31 +853,34 @@ export function useFloating(options: FloatOptions) {
     rect,
     z,
     busy,
+    settling,
+    dockHint,
+    maximized,
     ref,
     raise,
+    toggleMaximize,
     onMovePointerDown,
     resizeHandleProps,
     reset: () => {
-      live.current = initial;
-      setRect(initial);
-      save(id, initial);
-      paint();
+      setMaximized(false);
+      restoreRect.current = null;
+      springTo(initial);
     },
   };
 }
 
-function constrain(rect: FloatRect, minW: number, minH: number): FloatRect {
+function constrain(rect: FloatRect, minW: number, minH: number, topInset = 0): FloatRect {
   const vw = typeof window === 'undefined' ? 1440 : window.innerWidth;
   const vh = typeof window === 'undefined' ? 900 : window.innerHeight;
 
   const w = clamp(rect.w, minW, Math.max(minW, vw - 32));
-  const h = clamp(rect.h, minH, Math.max(minH, vh - 32));
+  const h = clamp(rect.h, minH, Math.max(minH, vh - topInset - 16));
 
   return {
     w,
     h,
     x: clamp(rect.x, -w + 88, Math.max(0, vw - 88)),
-    y: clamp(rect.y, 0, Math.max(0, vh - 44)),
+    y: clamp(rect.y, topInset, Math.max(topInset, vh - 44)),
   };
 }
 
@@ -559,18 +913,66 @@ export function ResizeHandles({
       ))}
       {/* The one corner that gets a visible grip, bottom-right, because that is
           where people look for it. */}
-      <span aria-hidden className="pointer-events-none absolute bottom-[5px] right-[5px] z-10 opacity-45">
+      <span
+        aria-hidden
+        className="pointer-events-none absolute bottom-[5px] right-[5px] z-10 text-fg-subtle opacity-40 transition-opacity duration-base"
+      >
         <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
           <path
             d="M10 1v9H1"
             stroke="currentColor"
             strokeWidth="1.25"
             strokeLinecap="round"
-            className="text-fg-subtle"
             strokeDasharray="0.5 3"
           />
         </svg>
       </span>
     </>
+  );
+}
+
+/**
+ * The landing-zone preview.
+ *
+ * Shown only while a drag is armed over a dock target. It is the difference
+ * between a drop that feels intentional and one that feels like the app
+ * deciding something on your behalf: you see the outcome before committing.
+ */
+export function DockPreview({ target, topInset = 0 }: { target: DockTarget; topInset?: number }) {
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+  if (!mounted || !target) return null;
+
+  const geometry =
+    target === 'left'
+      ? { left: 0, right: 'auto', width: 'clamp(280px, 26vw, 440px)' }
+      : target === 'right'
+        ? { left: 'auto', right: 0, width: 'clamp(280px, 26vw, 440px)' }
+        : { left: 0, right: 0, width: 'auto' };
+
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none fixed z-overlay animate-fade"
+      style={{
+        top: topInset,
+        bottom: 0,
+        ...geometry,
+        padding: target === 'maximize' ? 12 : 8,
+      }}
+    >
+      <div
+        className={cn(
+          'h-full w-full rounded-lg border-2 border-dashed border-accent/55 bg-accent/[0.07]',
+          'shadow-[inset_0_0_40px_-12px_hsl(var(--accent)/0.35)]',
+        )}
+      >
+        <div className="flex h-full items-center justify-center">
+          <span className="eyebrow rounded-full bg-surface-1/90 px-2.5 py-1 text-accent shadow-e1">
+            {target === 'maximize' ? 'Fill' : `Dock ${target}`}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }

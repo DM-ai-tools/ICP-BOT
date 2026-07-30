@@ -651,6 +651,35 @@
     }
   }
 
+  /* A panel arriving at an edge after being dragged there. Travels from the
+     direction it was released, so the gesture and the result read as one
+     continuous movement rather than a disappearance followed by an appearance. */
+  @keyframes dock-in-right {
+    from {
+      opacity: 0;
+      transform: translate3d(14px, 0, 0);
+      clip-path: inset(0 0 0 8%);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+      clip-path: inset(0 0 0 0);
+    }
+  }
+
+  @keyframes dock-in-left {
+    from {
+      opacity: 0;
+      transform: translate3d(-14px, 0, 0);
+      clip-path: inset(0 8% 0 0);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+      clip-path: inset(0 0 0 0);
+    }
+  }
+
   /* Indeterminate progress for a generation whose length is unknowable. */
   @keyframes drift {
     0% {
@@ -672,6 +701,12 @@
   }
   .animate-pop {
     animation: pop var(--t-base) var(--ease-spring) both;
+  }
+  .animate-dock-right {
+    animation: dock-in-right var(--t-base) var(--ease-snap) both;
+  }
+  .animate-dock-left {
+    animation: dock-in-left var(--t-base) var(--ease-snap) both;
   }
 
   /* Choreography: children arrive in sequence, not all at once. */

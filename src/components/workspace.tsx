@@ -10,14 +10,39 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FolderClock, Gauge, GripHorizontal, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
+import {
+  Command as CommandIcon,
+  Copy,
+  FolderClock,
+  Gauge,
+  GripHorizontal,
+  LayoutGrid,
+  Maximize2,
+  Minimize2,
+  Moon,
+  PanelLeftClose,
+  PanelRightClose,
+  PanelRightOpen,
+  Hammer,
+  Plus,
+  RotateCcw,
+  Sun,
+} from 'lucide-react';
 import { Brand } from '@/components/brand';
 import { BriefPanel } from '@/components/brief-panel';
 import { ChatPanel, type ThreadMessage } from '@/components/chat-panel';
+import { CommandPalette, useCommandPalette, type Command } from '@/components/command-palette';
 import { ResultsView, type LiveDoc } from '@/components/results-view';
-import { ThemeToggle } from '@/components/theme-provider';
-import { Button, Divider, Hint, ProgressTrack, Segmented, Spinner } from '@/components/ui/primitives';
-import { ResizeHandles, SplitHandle, useFloating, useSplit } from '@/components/ui/panels';
+import { ThemeToggle, useTheme } from '@/components/theme-provider';
+import { Button, Divider, Hint, Kbd, ProgressTrack, Segmented, Spinner } from '@/components/ui/primitives';
+import {
+  DockPreview,
+  ResizeHandles,
+  SplitHandle,
+  clearPanelLayout,
+  useFloating,
+  useSplit,
+} from '@/components/ui/panels';
 import { DEFAULT_SCENARIOS } from '@/lib/awareness';
 import { readSse } from '@/lib/sse-client';
 import type { AwarenessKey, SlotKey } from '@/lib/slots';
@@ -317,6 +342,36 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
   // ---- layout -------------------------------------------------------------
   const hasResults = state.documents.length > 0 || Object.keys(live).length > 0;
 
+  /** Docked to a side, or detached and floating. */
+  type Dock = 'left' | 'right' | 'float';
+  const [briefDock, setBriefDock] = React.useState<Dock>('right');
+  const [briefOpen, setBriefOpen] = React.useState(true);
+  const [mobileView, setMobileView] = React.useState<'chat' | 'results' | 'brief'>('chat');
+
+  React.useEffect(() => {
+    setBriefDock(readLocal<Dock>('brief:dock', 'right'));
+    setBriefOpen(readLocal('brief:open', true));
+  }, []);
+
+  const dockTo = React.useCallback((next: Dock) => {
+    setBriefDock(next);
+    writeLocal('brief:dock', next);
+    if (next !== 'float') {
+      setBriefOpen(true);
+      writeLocal('brief:open', true);
+    }
+  }, []);
+
+  const toggleBriefOpen = React.useCallback(() => {
+    setBriefOpen((v) => {
+      writeLocal('brief:open', !v);
+      return !v;
+    });
+  }, []);
+
+  const docked = briefDock !== 'float';
+  const dockLeft = briefDock === 'left';
+
   // Two independent, persisted splits. The brief keeps its width whether or not
   // results exist, so the layout does not lurch when generation finishes.
   const chatSplit = useSplit({
@@ -329,27 +384,16 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
     enabled: hasResults,
   });
 
+  // The handle sits on whichever side faces the rest of the layout, so dragging
+  // it outward always widens the brief regardless of which edge it is docked to.
   const briefSplit = useSplit({
     id: 'brief',
     initial: 320,
     min: 268,
     max: 460,
-    side: 'left',
+    side: dockLeft ? 'right' : 'left',
     snap: [288, 320, 380],
   });
-
-  const [briefDocked, setBriefDocked] = React.useState(true);
-  const [briefOpen, setBriefOpen] = React.useState(true);
-  const [mobileView, setMobileView] = React.useState<'chat' | 'results' | 'brief'>('chat');
-
-  React.useEffect(() => {
-    setBriefDocked(readLocal('brief:docked', true));
-  }, []);
-
-  const dock = (next: boolean) => {
-    setBriefDocked(next);
-    writeLocal('brief:docked', next);
-  };
 
   React.useEffect(() => {
     if (hasResults && mobileView === 'chat') setMobileView('results');
@@ -362,10 +406,127 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
       onEdit={editSlot}
       onBuild={() => void startGeneration(DEFAULT_SCENARIOS)}
       busy={generating}
-      docked={briefDocked}
-      onDock={dock}
+      docked={docked}
+      onDock={(next: boolean) => dockTo(next ? 'right' : 'float')}
     />
   );
+
+  // ---- commands ------------------------------------------------------------
+  const palette = useCommandPalette();
+  const { theme, toggle: toggleTheme } = useTheme();
+
+  const resetLayout = React.useCallback(() => {
+    clearPanelLayout();
+    chatSplit.reset();
+    briefSplit.reset();
+    dockTo('right');
+    setBriefOpen(true);
+  }, [chatSplit, briefSplit, dockTo]);
+
+  const commands = React.useMemo<Command[]>(() => {
+    const list: Command[] = [
+      {
+        id: 'new',
+        group: 'Run',
+        label: 'Start a new ICP',
+        icon: <Plus />,
+        keywords: 'create begin fresh',
+        run: () => void newRun(),
+      },
+      {
+        id: 'saved',
+        group: 'Run',
+        label: 'Saved ICPs',
+        icon: <FolderClock />,
+        keywords: 'history library previous',
+        run: () => router.push('/runs'),
+      },
+      {
+        id: 'admin',
+        group: 'Run',
+        label: 'Usage and history',
+        icon: <Gauge />,
+        keywords: 'cost tokens spend admin',
+        run: () => router.push('/admin'),
+      },
+      {
+        id: 'rebuild',
+        group: 'Run',
+        label: 'Rebuild every profile',
+        icon: <Hammer />,
+        hint: 'Regenerates all four awareness stages',
+        keywords: 'regenerate again redo',
+        disabled: !state.readiness.briefComplete || generating,
+        run: () => void startGeneration(DEFAULT_SCENARIOS, true),
+      },
+      {
+        id: 'copy-link',
+        group: 'Run',
+        label: 'Copy a link to this run',
+        icon: <Copy />,
+        keywords: 'share url',
+        run: () => void navigator.clipboard?.writeText(window.location.href).catch(() => {}),
+      },
+
+      {
+        id: 'brief-toggle',
+        group: 'Layout',
+        label: briefOpen && docked ? 'Hide the brief' : 'Show the brief',
+        icon: briefOpen && docked ? <PanelRightClose /> : <PanelRightOpen />,
+        run: () => (docked ? toggleBriefOpen() : dockTo('right')),
+      },
+      {
+        id: 'brief-left',
+        group: 'Layout',
+        label: 'Dock the brief left',
+        icon: <PanelLeftClose />,
+        keywords: 'move side',
+        disabled: briefDock === 'left',
+        run: () => dockTo('left'),
+      },
+      {
+        id: 'brief-right',
+        group: 'Layout',
+        label: 'Dock the brief right',
+        icon: <PanelRightClose />,
+        keywords: 'move side',
+        disabled: briefDock === 'right',
+        run: () => dockTo('right'),
+      },
+      {
+        id: 'brief-float',
+        group: 'Layout',
+        label: 'Detach the brief',
+        icon: <LayoutGrid />,
+        hint: 'Float it — drag to an edge to dock again',
+        keywords: 'undock floating window',
+        disabled: briefDock === 'float',
+        run: () => dockTo('float'),
+      },
+      {
+        id: 'layout-reset',
+        group: 'Layout',
+        label: 'Reset layout',
+        icon: <RotateCcw />,
+        hint: 'Restore every panel to its default size and position',
+        keywords: 'default restore arrangement',
+        run: resetLayout,
+      },
+      {
+        id: 'theme',
+        group: 'Layout',
+        label: theme === 'dark' ? 'Switch to light' : 'Switch to dark',
+        icon: theme === 'dark' ? <Sun /> : <Moon />,
+        keywords: 'appearance mode contrast',
+        run: toggleTheme,
+      },
+    ];
+    return list;
+  }, [
+    state.readiness.briefComplete, generating, briefOpen, docked, briefDock,
+    theme, toggleTheme, dockTo, toggleBriefOpen, resetLayout, router,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ]);
 
   return (
     <div className="atmosphere flex h-dvh flex-col overflow-hidden bg-bg text-fg">
@@ -373,8 +534,9 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
         state={state}
         generating={generating}
         onNew={newRun}
-        briefOpen={briefOpen && briefDocked}
-        onToggleBrief={() => (briefDocked ? setBriefOpen((v) => !v) : dock(true))}
+        briefOpen={briefOpen && docked}
+        onToggleBrief={() => (docked ? toggleBriefOpen() : dockTo('right'))}
+        onOpenPalette={() => palette.setOpen(true)}
         hasResults={hasResults}
         mobileView={mobileView}
         onMobileView={setMobileView}
@@ -389,7 +551,7 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
             'min-h-0 min-w-0 flex-col',
             hasResults ? 'shrink-0' : 'flex-1',
             hasResults && mobileView !== 'chat' ? 'hidden lg:flex' : 'flex',
-            !chatSplit.dragging && 'transition-[width] duration-base ease-out',
+            !chatSplit.dragging && !chatSplit.settling && 'transition-[width] duration-base ease-out',
           )}
         >
           <ChatPanel
@@ -434,21 +596,29 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
           </div>
         )}
 
-        {/* ---- brief, docked ------------------------------------------------ */}
-        {briefDocked && briefOpen && (
+        {/* ---- brief, docked ------------------------------------------------
+            CSS order rather than conditional placement, so moving the brief
+            from one edge to the other never unmounts it — an unmount would
+            discard scroll position and any half-finished inline edit. */}
+        {docked && briefOpen && (
           <>
             <SplitHandle
               {...briefSplit.handleProps}
               dragging={briefSplit.dragging}
               label="Resize the brief"
-              className="hidden md:block"
+              className={cn('hidden md:block', dockLeft ? 'order-[-1]' : 'order-1')}
             />
             <div
               ref={briefSplit.panelRef}
+              // Keyed on the edge so switching sides replays the entrance from
+              // the correct direction rather than silently swapping position.
+              key={briefDock}
               style={{ width: briefSplit.size }}
               className={cn(
                 'hidden shrink-0 md:flex',
-                !briefSplit.dragging && 'transition-[width] duration-base ease-out',
+                dockLeft ? 'order-[-2] animate-dock-left' : 'order-2 animate-dock-right',
+                !briefSplit.dragging && !briefSplit.settling &&
+                  'transition-[width] duration-base ease-out',
               )}
             >
               {brief}
@@ -457,7 +627,11 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
         )}
 
         {/* ---- brief, floating ---------------------------------------------- */}
-        {briefDocked ? null : <FloatingBrief onDock={() => dock(true)}>{brief}</FloatingBrief>}
+        {briefDock === 'float' && (
+          <FloatingBrief onDock={(side) => dockTo(side)} onClose={() => dockTo('right')}>
+            {brief}
+          </FloatingBrief>
+        )}
 
         {/* Mobile gets the brief as a full surface, not a cramped sheet. */}
         <div className={cn('min-h-0 flex-1 md:hidden', mobileView === 'brief' ? 'flex' : 'hidden')}>
@@ -466,6 +640,12 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
       </div>
 
       {generating && <GeneratingToast count={Object.keys(live).length} />}
+
+      <CommandPalette
+        open={palette.open}
+        onOpenChange={palette.setOpen}
+        commands={commands}
+      />
     </div>
   );
 }
@@ -480,6 +660,7 @@ function TopBar({
   onNew,
   briefOpen,
   onToggleBrief,
+  onOpenPalette,
   hasResults,
   mobileView,
   onMobileView,
@@ -489,6 +670,7 @@ function TopBar({
   onNew: () => void;
   briefOpen: boolean;
   onToggleBrief: () => void;
+  onOpenPalette: () => void;
   hasResults: boolean;
   mobileView: 'chat' | 'results' | 'brief';
   onMobileView: (view: 'chat' | 'results' | 'brief') => void;
@@ -533,6 +715,23 @@ function TopBar({
           />
         )}
 
+        {/* Discoverability for the palette. A bare ⌘K shortcut nobody is told
+            about is a shortcut nobody uses, so it gets a real target. */}
+        <button
+          type="button"
+          onClick={onOpenPalette}
+          aria-label="Open the command palette"
+          className={cn(
+            'group mr-1 hidden h-7 items-center gap-2 rounded-md border border-line pl-2 pr-1.5 sm:flex',
+            'bg-surface-2/60 text-fg-muted transition-all duration-fast ease-out',
+            'hover:border-line-strong hover:bg-surface-2 hover:text-fg-secondary active:scale-[0.98]',
+          )}
+        >
+          <CommandIcon className="size-3.5" />
+          <span className="text-sm">Commands</span>
+          <Kbd className="transition-colors duration-fast group-hover:border-line-strong">⌘K</Kbd>
+        </button>
+
         <Hint label="Saved ICPs">
           <Button variant="ghost" size="icon-sm" asChild>
             <Link href="/runs" aria-label="Saved ICPs">
@@ -574,66 +773,109 @@ function TopBar({
 }
 
 /**
- * The brief, detached. Dragged by its header, resized from any edge or corner,
- * constrained so it can never be lost off-screen, and raised above its siblings
- * the moment it is touched.
+ * The brief, detached.
+ *
+ * Dragged by its header, resized from any edge or corner, constrained so it can
+ * never be lost off-screen, raised above its siblings the moment it is touched,
+ * and — the part that makes it feel like a window rather than a div — dragged
+ * to a screen edge to re-dock, with the landing zone previewed before release.
+ * Escape abandons a drag in flight and springs it home.
  */
-function FloatingBrief({ children, onDock }: { children: React.ReactNode; onDock: () => void }) {
+const TOPBAR_PX = 52;
+
+function FloatingBrief({
+  children,
+  onDock,
+  onClose,
+}: {
+  children: React.ReactNode;
+  onDock: (side: 'left' | 'right') => void;
+  onClose: () => void;
+}) {
   const float = useFloating({
     id: 'brief:float',
     initial: {
       x: typeof window === 'undefined' ? 900 : Math.max(24, window.innerWidth - 392),
-      y: 76,
+      y: TOPBAR_PX + 24,
       w: 344,
       h: 560,
     },
     minW: 280,
     minH: 260,
+    topInset: TOPBAR_PX,
+    onDock,
   });
 
+  const moving = float.busy === 'move';
+
   return (
-    <div
-      ref={float.ref}
-      onPointerDownCapture={float.raise}
-      style={{
-        transform: `translate3d(${float.rect.x}px, ${float.rect.y}px, 0)`,
-        width: float.rect.w,
-        height: float.rect.h,
-        zIndex: float.z,
-      }}
-      className={cn(
-        'panel-float gpu fixed left-0 top-0 hidden flex-col overflow-hidden md:flex',
-        float.busy ? 'select-none' : 'transition-shadow duration-base ease-out',
-      )}
-      role="dialog"
-      aria-label="Brief"
-    >
+    <>
+      <DockPreview target={float.dockHint} topInset={TOPBAR_PX} />
+
       <div
-        onPointerDown={float.onMovePointerDown}
+        ref={float.ref}
+        onPointerDownCapture={float.raise}
+        style={{
+          transform: `translate3d(${float.rect.x}px, ${float.rect.y}px, 0)`,
+          width: float.rect.w,
+          height: float.rect.h,
+          zIndex: float.z,
+        }}
         className={cn(
-          'flex h-9 shrink-0 items-center gap-2 border-b border-line bg-surface-2 px-2.5',
-          float.busy === 'move' ? 'cursor-grabbing' : 'cursor-grab',
+          'panel-float gpu fixed left-0 top-0 hidden flex-col overflow-hidden md:flex',
+          float.busy
+            ? 'select-none'
+            : 'transition-[box-shadow,opacity] duration-base ease-out',
+          // Lifting the panel while it moves, and dimming it while a dock is
+          // armed, means the preview underneath is the thing you are reading.
+          moving && 'shadow-e4',
+          moving && float.dockHint && 'opacity-70',
         )}
+        role="dialog"
+        aria-label="Brief"
       >
-        <GripHorizontal className="size-3.5 shrink-0 text-fg-subtle" />
-        <span className="eyebrow flex-1">Brief</span>
-        <Hint label="Dock to the side">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={onDock}
-            data-no-drag
-            aria-label="Dock the brief"
-          >
-            <PanelRightClose />
-          </Button>
-        </Hint>
+        <div
+          onPointerDown={float.onMovePointerDown}
+          onDoubleClick={float.toggleMaximize}
+          className={cn(
+            'flex h-9 shrink-0 items-center gap-2 border-b border-line bg-surface-2 px-2.5',
+            'transition-colors duration-fast',
+            moving ? 'cursor-grabbing bg-surface-3' : 'cursor-grab',
+          )}
+        >
+          <GripHorizontal className="size-3.5 shrink-0 text-fg-subtle" />
+          <span className="eyebrow flex-1 select-none">Brief</span>
+
+          <Hint label={float.maximized ? 'Restore' : 'Fill the screen'}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={float.toggleMaximize}
+              data-no-drag
+              aria-label={float.maximized ? 'Restore the brief' : 'Maximise the brief'}
+            >
+              {float.maximized ? <Minimize2 /> : <Maximize2 />}
+            </Button>
+          </Hint>
+
+          <Hint label="Dock to the side">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={onClose}
+              data-no-drag
+              aria-label="Dock the brief"
+            >
+              <PanelRightClose />
+            </Button>
+          </Hint>
+        </div>
+
+        <div className="min-h-0 flex-1">{children}</div>
+
+        <ResizeHandles handleProps={float.resizeHandleProps} />
       </div>
-
-      <div className="min-h-0 flex-1">{children}</div>
-
-      <ResizeHandles handleProps={float.resizeHandleProps} />
-    </div>
+    </>
   );
 }
 
