@@ -19,8 +19,16 @@ import { buildInputBlock, buildWhyFraming, type GenerationContext } from '../src
 import { buildAwarenessMapDocx, buildSingleDocx, coverInfoFrom, exportFilename } from '../src/lib/docx';
 import { buildPdf } from '../src/lib/pdf';
 import { comparisonToMarkdown, type ComparisonRow } from '../src/lib/comparison';
-import { scenariosFromModal, AWARENESS } from '../src/lib/awareness';
+import {
+  ALL_AWARENESS_KEYS,
+  AWARENESS,
+  DEFAULT_SCENARIOS,
+  sortScenarios,
+} from '../src/lib/awareness';
 import { buildResolverUserMessage } from '../src/lib/resolve';
+import { buildXlsx, flattenMarkdown, heightFor } from '../src/lib/xlsx';
+import { SELECTABLE_FORMATS } from '../src/lib/export-service';
+import { AUDIENCE_MODES, DEFAULT_AUDIENCE_MODE, isAudienceMode } from '../src/lib/settings-shared';
 import {
   ASKABLE_SLOTS,
   PRICE_NOT_SPECIFIED,
@@ -355,23 +363,26 @@ check(
 
 // ---------------------------------------------------------------------------
 
-section('Awareness modal mapping');
+section('Awareness scenarios');
 
-const defaultPick = scenariosFromModal({
-  cards: ['problem_aware', 'solution_aware', 'unaware', 'product_aware'],
-  readyToBuy: false,
-});
-check('one click yields exactly four documents', defaultPick.length === 4, defaultPick.join(','));
-check('scenarios come back in canonical order', defaultPick[0] === 'unaware' && defaultPick[3] === 'product_aware');
-
-const withReady = scenariosFromModal({
-  cards: ['problem_aware', 'solution_aware', 'unaware', 'product_aware'],
-  readyToBuy: true,
-});
-check('the ready-to-buy toggle adds a fifth', withReady.length === 5 && withReady.includes('most_aware'));
-
-const noneChecked = scenariosFromModal({ cards: [], readyToBuy: true });
-check('unticking everything yields nothing to generate', noneChecked.length === 0);
+// There is no stage picker any more — every run builds the same four. The
+// answer to "which stages?" was always "all of them", and the value of the
+// deliverable is the contrast between them.
+check('every run builds exactly four stages', DEFAULT_SCENARIOS.length === 4, DEFAULT_SCENARIOS.join(','));
+check(
+  'they are in canonical order, unaware first',
+  DEFAULT_SCENARIOS[0] === 'unaware' && DEFAULT_SCENARIOS[3] === 'product_aware',
+  DEFAULT_SCENARIOS.join(','),
+);
+check(
+  'the set is sorted by canonical rank',
+  JSON.stringify(sortScenarios(DEFAULT_SCENARIOS)) === JSON.stringify(DEFAULT_SCENARIOS),
+);
+check(
+  'Most Aware is deliberately excluded',
+  !DEFAULT_SCENARIOS.includes('most_aware') && ALL_AWARENESS_KEYS.includes('most_aware'),
+);
+check('no duplicates', new Set(DEFAULT_SCENARIOS).size === DEFAULT_SCENARIOS.length);
 
 check(
   'labels match the master prompt wording exactly',
@@ -702,6 +713,93 @@ check('comparison markdown has a header row', comparisonMd.includes('| Awareness
 check('comparison markdown has one row per scenario', comparisonMd.split('\n').filter((l) => l.startsWith('| ')).length === 6);
 
 // ---------------------------------------------------------------------------
+
+
+// ---------------------------------------------------------------------------
+
+section('Audience mode');
+
+check('two modes, strategist and client', AUDIENCE_MODES.map((m) => m.key).join(',') === 'strategist,client');
+check('strategist is the default', DEFAULT_AUDIENCE_MODE === 'strategist');
+check('every mode carries a label and a blurb', AUDIENCE_MODES.every((m) => m.label && m.blurb.length > 20));
+check('the guard rejects anything else', !isAudienceMode('inhouse') && !isAudienceMode('') && !isAudienceMode(null));
+check('and accepts both real modes', isAudienceMode('strategist') && isAudienceMode('client'));
+
+// ---------------------------------------------------------------------------
+
+section('Excel export');
+
+check('the picker offers PDF and Excel only', SELECTABLE_FORMATS.join(',') === 'pdf,xlsx');
+
+// Row height is the whole difficulty: Excel will not auto-fit a wrapped cell
+// written programmatically, so a long section renders as an empty-looking sliver
+// unless every row is measured and given an explicit height.
+const shortHeight = heightFor('Melbourne, Australia');
+const longHeight = heightFor('word '.repeat(400));
+check('a one-line value gets a compact row', shortHeight <= 26, String(shortHeight));
+const wrapHeight = heightFor('word '.repeat(40));
+check('a value that wraps gets extra room', wrapHeight > shortHeight * 1.5, String(wrapHeight));
+check('a long section gets a much taller row', longHeight > shortHeight * 4, `${shortHeight} vs ${longHeight}`);
+check('no row exceeds Excel’s 409pt ceiling', heightFor('x '.repeat(50_000)) <= 409);
+check('an empty value still gets a usable height', heightFor('') >= 20);
+check(
+  'height scales with content, not just presence',
+  heightFor('word '.repeat(60)) > heightFor('word '.repeat(20)),
+);
+check(
+  'explicit newlines each claim a line',
+  heightFor('a\nb\nc\nd\ne\nf') > heightFor('a'),
+);
+
+check('markdown is flattened for cells', !flattenMarkdown('## Heading\n\n**bold** and *ital*').includes('#'));
+check('bullets survive as readable markers', flattenMarkdown('- one\n- two').includes('•'));
+
+const xlsxBuffer = await buildXlsx({
+  markdown: goodDoc,
+  slots: nearlyDone,
+  serviceName: 'Dental SEO',
+  service: { name: 'Dental SEO', price_terms: '$2,500/month retainer' },
+  awarenessLabel: 'Only Problem-Aware',
+  masterPromptVersion: masterPromptVersion(),
+  generatedAt: new Date(1767225600000),
+  badge: 'complete',
+});
+check('XLSX builds', xlsxBuffer.length > 5000, `${xlsxBuffer.length} bytes`);
+check('XLSX is a real zip container', xlsxBuffer.subarray(0, 2).toString('binary') === 'PK');
+
+// Look inside rather than trusting a byte count.
+const xlsxZip = await JSZip.loadAsync(xlsxBuffer);
+const sheetXml = (await xlsxZip.file('xl/worksheets/sheet1.xml')?.async('string')) ?? '';
+const sharedStrings = (await xlsxZip.file('xl/sharedStrings.xml')?.async('string')) ?? '';
+const allText = sheetXml + sharedStrings;
+
+check('sheet carries the brief labels', ['Company name', 'Industry', 'Region', 'Price / terms'].every((l) => allText.includes(l)));
+check('sheet carries every mandatory section heading', SECTIONS.slice(1).every((s) => allText.includes(escapeXml(s.heading))),
+  SECTIONS.slice(1).filter((s) => !allText.includes(escapeXml(s.heading))).map((s) => s.heading).join(', '));
+check('sheet carries the stated price verbatim', allText.includes('$2,500/month retainer'));
+check('sheet records the master prompt version', allText.includes(masterPromptVersion()));
+check('rows carry explicit heights', /customHeight="1"/.test(sheetXml) || /ht="/.test(sheetXml));
+check('value cells wrap', /wrapText="1"/.test((await xlsxZip.file('xl/styles.xml')?.async('string')) ?? ''));
+
+// The pricing guardrail must hold in Excel too.
+const xlsxNoPrice = await buildXlsx({
+  markdown: goodDoc,
+  slots: { ...nearlyDone, services: [{ name: 'Dental SEO', price_terms: null }] },
+  serviceName: 'Dental SEO',
+  service: { name: 'Dental SEO', price_terms: null },
+  awarenessLabel: 'Unaware',
+  masterPromptVersion: masterPromptVersion(),
+  generatedAt: new Date(1767225600000),
+  badge: 'complete',
+});
+const noPriceZip = await JSZip.loadAsync(xlsxNoPrice);
+const noPriceText =
+  ((await noPriceZip.file('xl/worksheets/sheet1.xml')?.async('string')) ?? '') +
+  ((await noPriceZip.file('xl/sharedStrings.xml')?.async('string')) ?? '');
+check('a blank price says so rather than inventing one', noPriceText.includes('quote/assessment required'));
+
+// ---------------------------------------------------------------------------
+// Tally last, so a failure in ANY section above actually fails the run.
 
 console.log(
   `\n\x1b[1m${failed === 0 ? '\x1b[32mAll checks passed' : '\x1b[31mFailures'}\x1b[0m  ${passed} passed, ${failed} failed\n`,

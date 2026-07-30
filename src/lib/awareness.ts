@@ -77,16 +77,25 @@ export const AWARENESS: Record<AwarenessKey, AwarenessScenario> = {
   },
 };
 
-/** The four cards of the 2x2, in grid order. All pre-checked by default. */
-export const MODAL_CARDS: AwarenessKey[] = [
+/**
+ * The four scenarios every run produces, in canonical order.
+ *
+ * Not a choice. Asking which awareness stages to build was a question about the
+ * framework rather than about the business, and the answer was always "all of
+ * them" — the whole value of the deliverable is the contrast between them, and
+ * a single stage in isolation says very little. So the brief completing is the
+ * only trigger needed.
+ *
+ * Most Aware is deliberately excluded: it is a closing-stage profile that
+ * overlaps heavily with Product/Service-Aware, and four documents is already a
+ * substantial read.
+ */
+export const DEFAULT_SCENARIOS: AwarenessKey[] = [
+  'unaware',
   'problem_aware',
   'solution_aware',
-  'unaware',
   'product_aware',
 ];
-
-/** The "ready to buy" sub-toggle on the "Both aware" card adds this scenario. */
-export const READY_TO_BUY_SCENARIO: AwarenessKey = 'most_aware';
 
 export const ALL_AWARENESS_KEYS: AwarenessKey[] = [
   'unaware',
@@ -124,18 +133,3 @@ export function sortScenarios(keys: AwarenessKey[]): AwarenessKey[] {
   return [...keys].sort((a, b) => scenarioRank(a) - scenarioRank(b));
 }
 
-/**
- * Turn a modal selection into the scenario list to generate.
- * The sub-toggle adds Most Aware as a fifth document; it does not replace
- * Product/Service-Aware, so the default path stays exactly four.
- */
-export function scenariosFromModal(selection: {
-  cards: AwarenessKey[];
-  readyToBuy: boolean;
-}): AwarenessKey[] {
-  const set = new Set<AwarenessKey>(selection.cards.filter((k) => MODAL_CARDS.includes(k)));
-  if (selection.readyToBuy && set.has('product_aware')) {
-    set.add(READY_TO_BUY_SCENARIO);
-  }
-  return sortScenarios([...set]);
-}

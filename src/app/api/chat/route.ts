@@ -40,6 +40,7 @@ import {
   type SlotKey,
   type SlotValues,
 } from '@/lib/slots';
+import { getAudienceMode } from '@/lib/settings';
 import { errorResponse, sseStream } from '@/lib/sse';
 import type { ChatEvent } from '@/lib/types';
 
@@ -111,6 +112,7 @@ export async function POST(request: Request) {
     const deflected = new Set<SlotKey>(deflectedSlots(run));
     let missing: string[] = (run.missing as string[]) ?? [];
 
+    const audienceMode = await getAudienceMode();
     const history = await historyFor(runId);
     const intent = userMessage
       ? detectIntent(userMessage)
@@ -284,6 +286,9 @@ export async function POST(request: Request) {
       targetSlot: readiness.nextAsk,
       ambiguities,
       deflected: [...deflected],
+      audience: audienceMode,
+      resolvedNothing: userMessage ? changedSlots.length === 0 : false,
+      remainingGaps: readiness.missingRequired.length,
       siteNotice,
       changedSlots,
       invalidatedCount,

@@ -163,6 +163,17 @@ model Comparison {
   @@index([runId])
 }
 
+/// Instance-wide settings, set from the admin panel.
+///
+/// A key/value table rather than columns on a singleton row: settings are read
+/// on nearly every request and added occasionally, and this way adding one is a
+/// code change with no migration.
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
 /// Per-call token and cost logging.
 model UsageLog {
   id    String @id @default(cuid())

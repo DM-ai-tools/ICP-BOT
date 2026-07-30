@@ -8,13 +8,13 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { FolderClock, Gauge, MessageSquare, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
-import { AwarenessModal } from '@/components/awareness-modal';
 import { Brand } from '@/components/brand';
 import { BriefPanel } from '@/components/brief-panel';
 import { ChatPanel, type ThreadMessage } from '@/components/chat-panel';
 import { ResultsView, type LiveDoc } from '@/components/results-view';
 import { ThemeToggle } from '@/components/theme-provider';
 import { Button, Spinner } from '@/components/ui/primitives';
+import { DEFAULT_SCENARIOS } from '@/lib/awareness';
 import { readSse } from '@/lib/sse-client';
 import type { AwarenessKey, SlotKey } from '@/lib/slots';
 import type { ChatEvent, GenerateEvent, RunState } from '@/lib/types';
@@ -39,7 +39,6 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
   const [markdownById, setMarkdownById] = React.useState<Record<string, string>>({});
   const [generating, setGenerating] = React.useState(false);
 
-  const [modalOpen, setModalOpen] = React.useState(false);
   const [panelOpen, setPanelOpen] = React.useState(true);
   const [view, setView] = React.useState<'chat' | 'results'>('chat');
 
@@ -55,35 +54,23 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- the blocking modal ------------------------------------------------
-  // Opens only when the brief is complete AND awareness is genuinely unresolved.
-  React.useEffect(() => {
-    if (chatBusy || generating) return;
-    if (state.readiness.needsAwarenessModal && !state.awarenessModalAnswered) {
-      setModalOpen(true);
-    }
-  }, [state.readiness.needsAwarenessModal, state.awarenessModalAnswered, chatBusy, generating]);
+  // ---- generation starts itself -------------------------------------------
+  //
+  // There is no stage picker any more. Every run builds all four awareness
+  // stages, because the value of the deliverable is the contrast between them
+  // and the answer to "which ones?" was always "all of them". A complete brief
+  // is the only trigger.
+  const autoStarted = React.useRef(false);
 
-  // Awareness settled in conversation → straight to generation, no modal.
   React.useEffect(() => {
-    if (chatBusy || generating) return;
-    if (
-      state.readiness.briefComplete &&
-      state.readiness.awarenessResolved &&
-      state.awarenessResolvedInChat &&
-      !state.awarenessModalAnswered &&
-      state.documents.length === 0 &&
-      state.slots.awareness_level
-    ) {
-      void startGeneration([state.slots.awareness_level]);
-    }
+    if (chatBusy || generating || autoStarted.current) return;
+    if (!state.readiness.briefComplete) return;
+    if (state.documents.length > 0) return;
+
+    autoStarted.current = true;
+    void startGeneration(DEFAULT_SCENARIOS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    state.readiness.briefComplete,
-    state.readiness.awarenessResolved,
-    state.awarenessResolvedInChat,
-    chatBusy,
-  ]);
+  }, [state.readiness.briefComplete, state.documents.length, chatBusy, generating]);
 
   // ---- chat --------------------------------------------------------------
   async function sendTurn(message: string | null) {
@@ -164,7 +151,6 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
     generateAbort.current = controller;
 
     setGenerating(true);
-    setModalOpen(false);
     setView('results');
 
     try {
@@ -328,7 +314,6 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
   }
 
   const hasResults = state.documents.length > 0 || Object.keys(live).length > 0;
-  const serviceCount = Math.max(1, state.slots.services?.length ?? 1);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
@@ -451,29 +436,18 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
           <BriefPanel
             state={state}
             onEdit={editSlot}
-            onOpenAwareness={() => setModalOpen(true)}
+            onBuild={() => void startGeneration(DEFAULT_SCENARIOS)}
             busy={generating}
           />
         </div>
       </div>
 
-      {/* Mobile: the brief lives behind a bar so the modal still fits a phone. */}
+      {/* Mobile: the brief lives behind a collapsible bar. */}
       <MobileBrief
         state={state}
         onEdit={editSlot}
-        onOpenAwareness={() => setModalOpen(true)}
+        onBuild={() => void startGeneration(DEFAULT_SCENARIOS)}
         busy={generating}
-      />
-
-      <AwarenessModal
-        open={modalOpen}
-        onOpenChange={(open) => {
-          // Dismissing returns to chat with nothing generated and no lost state.
-          setModalOpen(open);
-        }}
-        onGenerate={(scenarios) => void startGeneration(scenarios)}
-        busy={generating}
-        serviceCount={serviceCount}
       />
 
       {generating && (
@@ -491,12 +465,12 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
 function MobileBrief({
   state,
   onEdit,
-  onOpenAwareness,
+  onBuild,
   busy,
 }: {
   state: RunState;
   onEdit: (key: SlotKey, value: unknown) => Promise<void>;
-  onOpenAwareness: () => void;
+  onBuild: () => void;
   busy: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -517,7 +491,7 @@ function MobileBrief({
           <BriefPanel
             state={state}
             onEdit={onEdit}
-            onOpenAwareness={onOpenAwareness}
+            onBuild={onBuild}
             busy={busy}
           />
         </div>

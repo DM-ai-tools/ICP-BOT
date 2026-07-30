@@ -13,6 +13,7 @@ import {
   exportSingleDocx,
   exportSingleMarkdown,
   exportSinglePdf,
+  exportSingleXlsx,
   exportZip,
   fileResponse,
   loadRunForExport,
@@ -66,6 +67,10 @@ export async function GET(request: Request) {
     if (format === 'md' || format === 'markdown') {
       const { body, filename } = exportSingleMarkdown(run, doc);
       return fileResponse(body, filename, 'md');
+    }
+    if (format === 'xlsx' || format === 'excel') {
+      const { buffer, filename } = await exportSingleXlsx(run, doc);
+      return fileResponse(buffer, filename, 'xlsx');
     }
     if (format === 'pdf') {
       const { buffer, filename } = await exportSinglePdf(run, doc);

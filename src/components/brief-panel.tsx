@@ -55,11 +55,12 @@ const OPTIONAL_KEYS = new Set<SlotKey>(['offer_type', 'size_band', 'notes', 'web
 interface BriefPanelProps {
   state: RunState | null;
   onEdit: (key: SlotKey, value: unknown) => Promise<void>;
-  onOpenAwareness: () => void;
+  /** Rebuild every scenario. Generation starts on its own the first time. */
+  onBuild: () => void;
   busy?: boolean;
 }
 
-export function BriefPanel({ state, onEdit, onOpenAwareness, busy }: BriefPanelProps) {
+export function BriefPanel({ state, onEdit, onBuild, busy }: BriefPanelProps) {
   const [editing, setEditing] = React.useState<SlotKey | null>(null);
   const [saving, setSaving] = React.useState<SlotKey | null>(null);
 
@@ -133,7 +134,7 @@ export function BriefPanel({ state, onEdit, onOpenAwareness, busy }: BriefPanelP
               onStartEdit={() => setEditing(key)}
               onCancel={() => setEditing(null)}
               onSave={(value) => handleSave(key, value)}
-              onOpenAwareness={onOpenAwareness}
+              onBuild={onBuild}
             />
           ))}
         </div>
@@ -159,11 +160,11 @@ export function BriefPanel({ state, onEdit, onOpenAwareness, busy }: BriefPanelP
           <Button
             variant="accent"
             className="w-full"
-            onClick={onOpenAwareness}
+            onClick={onBuild}
             disabled={busy}
           >
             {busy ? <Spinner /> : <Sparkles />}
-            {state.documents.length ? 'Build more scenarios' : 'Choose awareness stages'}
+            {state.documents.length ? 'Rebuild all four' : 'Build the profiles'}
           </Button>
         ) : (
           <p className="text-center text-[12.5px] leading-snug text-muted-foreground">
@@ -197,7 +198,7 @@ interface SlotRowProps {
   onStartEdit: () => void;
   onCancel: () => void;
   onSave: (value: unknown) => void;
-  onOpenAwareness: () => void;
+  onBuild: () => void;
 }
 
 function SlotRow({
@@ -209,7 +210,7 @@ function SlotRow({
   onStartEdit,
   onCancel,
   onSave,
-  onOpenAwareness,
+  onBuild,
 }: SlotRowProps) {
   const spec = SLOT_SPECS.find((s) => s.key === slotKey);
   const value = (slots as Record<string, unknown>)[slotKey];
@@ -266,15 +267,12 @@ function SlotRow({
       </div>
 
       {slotKey === 'awareness_level' ? (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onOpenAwareness}
-          className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-          aria-label="Choose awareness stages"
+        <span
+          className="shrink-0 px-2 text-[11px] text-muted-foreground"
+          title="Every run builds all four awareness stages"
         >
-          <Sparkles />
-        </Button>
+          all four
+        </span>
       ) : (
         <Button
           variant="ghost"

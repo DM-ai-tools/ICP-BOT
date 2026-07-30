@@ -5,6 +5,8 @@ import { APP_NAME } from '@/lib/brand';
 import { Brand } from '@/components/brand';
 import { ThemeToggle } from '@/components/theme-provider';
 import { Badge, Button } from '@/components/ui/primitives';
+import { getAudienceMode } from '@/lib/settings';
+import { AudienceModeToggle } from '@/components/audience-mode-toggle';
 import { slotsOf } from '@/lib/run-service';
 import { markdownToPlainText } from '@/lib/markdown';
 import { cn } from '@/lib/utils';
@@ -78,6 +80,8 @@ export default async function AdminPage() {
     prisma.document.groupBy({ by: ['status'], _count: { _all: true } }),
   ]);
 
+  const audienceMode = await getAudienceMode();
+
   const totalPrompt = runTotals._sum.promptTokens ?? 0;
   const totalCompletion = runTotals._sum.completionTokens ?? 0;
   const totalCost = runTotals._sum.costUsd ?? 0;
@@ -145,6 +149,8 @@ export default async function AdminPage() {
             }
           />
         </section>
+
+        <AudienceModeToggle initial={audienceMode} />
 
         {/* ---- spend by call type ------------------------------------ */}
         <Section

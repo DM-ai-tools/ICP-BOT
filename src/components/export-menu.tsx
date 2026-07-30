@@ -4,9 +4,9 @@
  * Download menu: a scenario × format matrix.
  *
  * Everything starts selected — the common case is "give me all of it" and that
- * has to stay one click — but any cell can be switched off, so you can take
- * PDFs only, or drop markdown before a client handover, without generating
- * files nobody asked for. Green means it goes in the zip.
+ * has to stay one click — but any cell can be switched off, so PDFs-only across
+ * every stage, or one stage in both formats, takes a couple of clicks and
+ * generates nothing you did not ask for. Green means it goes in the zip.
  */
 import * as React from 'react';
 import { Check, Download, Layers } from 'lucide-react';
@@ -15,17 +15,20 @@ import type { RunState } from '@/lib/types';
 import { Button } from '@/components/ui/primitives';
 import { cn } from '@/lib/utils';
 
-type ExportFormat = 'docx' | 'pdf' | 'md';
+type ExportFormat = 'pdf' | 'xlsx';
 
+/**
+ * Two formats: PDF to read and send, Excel to work with field-by-field.
+ * The awareness map is still a Word document and has its own button below.
+ */
 const FORMATS: { key: ExportFormat; label: string; code: string }[] = [
-  { key: 'docx', label: 'DOCX', code: 'd' },
   { key: 'pdf', label: 'PDF', code: 'p' },
-  { key: 'md', label: 'MD', code: 'm' },
+  { key: 'xlsx', label: 'Excel', code: 'x' },
 ];
 
 type Matrix = Record<string, Record<ExportFormat, boolean>>;
 
-const ALL_ON: Record<ExportFormat, boolean> = { docx: true, pdf: true, md: true };
+const ALL_ON: Record<ExportFormat, boolean> = { pdf: true, xlsx: true };
 
 export function ExportMenu({ state }: { state: RunState }) {
   const ready = React.useMemo(
@@ -36,7 +39,7 @@ export function ExportMenu({ state }: { state: RunState }) {
   const [open, setOpen] = React.useState(false);
   const [matrix, setMatrix] = React.useState<Matrix>({});
 
-  // Every newly-generated document arrives selected in all three formats.
+  // Every newly-generated document arrives selected in both formats.
   React.useEffect(() => {
     setMatrix((prev) => {
       const next: Matrix = {};
@@ -54,7 +57,7 @@ export function ExportMenu({ state }: { state: RunState }) {
 
   const toggleRow = (id: string) => {
     const allOn = FORMATS.every((f) => isOn(id, f.key));
-    setMatrix((m) => ({ ...m, [id]: { docx: !allOn, pdf: !allOn, md: !allOn } }));
+    setMatrix((m) => ({ ...m, [id]: { pdf: !allOn, xlsx: !allOn } }));
   };
 
   const toggleColumn = (format: ExportFormat) => {
@@ -77,7 +80,7 @@ export function ExportMenu({ state }: { state: RunState }) {
     0,
   );
 
-  // Compact encoding: docId:dpm,docId2:p — spelling out cuids and format names
+  // Compact encoding: docId:px,docId2:p — spelling out cuids and format names
   // for a full matrix would push the query string past what some proxies
   // forward happily.
   const include = ready
@@ -128,7 +131,7 @@ export function ExportMenu({ state }: { state: RunState }) {
                   type="button"
                   onClick={() => toggleColumn(f.key)}
                   title={`Toggle ${f.label} for every scenario`}
-                  className="w-[52px] text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+                  className="w-[60px] text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
                 >
                   {f.label}
                 </button>
@@ -165,7 +168,7 @@ export function ExportMenu({ state }: { state: RunState }) {
                         aria-label={`${f.label} for ${doc.awarenessLabel}`}
                         onClick={() => toggleCell(doc.id, f.key)}
                         className={cn(
-                          'h-7 w-[52px] rounded-md border text-[10.5px] font-semibold uppercase tracking-wide transition-all',
+                          'h-7 w-[60px] rounded-md border text-[10.5px] font-semibold uppercase tracking-wide transition-all',
                           on
                             ? 'border-stated/45 bg-stated/15 text-stated'
                             : 'border-border text-muted-foreground/50 hover:border-muted-foreground/40 hover:text-muted-foreground',

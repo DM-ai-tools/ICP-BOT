@@ -18,6 +18,7 @@ import {
   exportFilename,
 } from './docx';
 import { buildPdf } from './pdf';
+import { buildXlsx } from './xlsx';
 import { comparisonToMarkdown, type ComparisonRow } from './compare';
 import { slugify, type SlotValues } from './slots';
 import { slotsOf } from './run-service';
@@ -111,6 +112,30 @@ export async function exportSinglePdf(
   };
 }
 
+export async function exportSingleXlsx(
+  run: ExportRun,
+  doc: ExportDoc,
+): Promise<{ buffer: Buffer; filename: string }> {
+  const slots = slotsOf(run);
+  const services = slots.services ?? [];
+
+  const buffer = await buildXlsx({
+    markdown: doc.markdown,
+    slots,
+    serviceName: doc.serviceName,
+    service: services[doc.serviceIndex] ?? services[0],
+    awarenessLabel: doc.awarenessLabel,
+    masterPromptVersion: doc.masterPromptVersion,
+    generatedAt: doc.completedAt ?? doc.updatedAt,
+    badge: doc.badge,
+  });
+
+  return {
+    buffer,
+    filename: exportFilename(slots.company_name, awarenessShort(doc.scenario as AwarenessKey), 'xlsx'),
+  };
+}
+
 export function exportSingleMarkdown(
   run: ExportRun,
   doc: ExportDoc,
@@ -187,14 +212,27 @@ export async function exportAwarenessMapDocx(
 // Zip
 // ---------------------------------------------------------------------------
 
-export type ExportFormat = 'docx' | 'pdf' | 'md';
+export type ExportFormat = 'pdf' | 'xlsx' | 'docx' | 'md';
 
-export const ALL_FORMATS: ExportFormat[] = ['docx', 'pdf', 'md'];
+/**
+ * What the picker offers. PDF for reading and sending, Excel for working with
+ * the content field-by-field.
+ *
+ * DOCX and Markdown are still reachable by direct URL — the awareness map is a
+ * Word document and nothing about those exporters was removed — they are simply
+ * no longer in the per-scenario bundle.
+ */
+export const SELECTABLE_FORMATS: ExportFormat[] = ['pdf', 'xlsx'];
 
 /** documentId → which formats to include for that scenario. */
 export type ZipSelection = Map<string, Set<ExportFormat>>;
 
-const FORMAT_CODE: Record<string, ExportFormat> = { d: 'docx', p: 'pdf', m: 'md' };
+const FORMAT_CODE: Record<string, ExportFormat> = {
+  p: 'pdf',
+  x: 'xlsx',
+  d: 'docx',
+  m: 'md',
+};
 
 /**
  * Parse the compact selection param: `docId:dpm,otherId:p`
@@ -251,18 +289,23 @@ export async function exportZip(
 
   const needs = (format: ExportFormat) => docs.some((doc) => wants(doc, format));
 
-  const docxFolder = needs('docx') ? zip.folder('scenarios-docx') : null;
   const pdfFolder = needs('pdf') ? zip.folder('scenarios-pdf') : null;
+  const excelFolder = needs('xlsx') ? zip.folder('scenarios-excel') : null;
+  const docxFolder = needs('docx') ? zip.folder('scenarios-docx') : null;
   const mdFolder = needs('md') ? zip.folder('scenarios-markdown') : null;
 
   for (const doc of docs) {
-    if (wants(doc, 'docx')) {
-      const single = await exportSingleDocx(run, doc);
-      docxFolder?.file(single.filename, single.buffer);
-    }
     if (wants(doc, 'pdf')) {
       const pdf = await exportSinglePdf(run, doc);
       pdfFolder?.file(pdf.filename, pdf.buffer);
+    }
+    if (wants(doc, 'xlsx')) {
+      const excel = await exportSingleXlsx(run, doc);
+      excelFolder?.file(excel.filename, excel.buffer);
+    }
+    if (wants(doc, 'docx')) {
+      const single = await exportSingleDocx(run, doc);
+      docxFolder?.file(single.filename, single.buffer);
     }
     if (wants(doc, 'md')) {
       const markdown = exportSingleMarkdown(run, doc);
@@ -291,12 +334,13 @@ export async function exportZip(
       'Contents',
       '  awareness-map.docx      Cover, comparison table and every scenario as a chapter with a table of contents.',
       ...(docxFolder ? ['  scenarios-docx/         Each awareness stage as a standalone Word file.'] : []),
-      ...(pdfFolder ? ['  scenarios-pdf/          The same content as PDF, for sending read-only.'] : []),
+      ...(pdfFolder ? ['  scenarios-pdf/          Each awareness stage as a PDF, for reading and sending.'] : []),
+      ...(excelFolder ? ['  scenarios-excel/        The same content as a spreadsheet: field name in column A, content in column B.'] : []),
       ...(mdFolder ? ['  scenarios-markdown/     The same content as raw markdown.'] : []),
       '',
       'Scenarios included:',
       ...docs.map((doc) => {
-        const formats = ALL_FORMATS.filter((f) => wants(doc, f));
+        const formats = SELECTABLE_FORMATS.filter((f) => wants(doc, f));
         return `  - ${awarenessLabel(doc.scenario as AwarenessKey)} (${doc.badge ?? 'unknown'}) — ${formats.join(', ')}`;
       }),
       '',
@@ -317,6 +361,7 @@ export async function exportZip(
 // ---------------------------------------------------------------------------
 
 const MIME: Record<string, string> = {
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pdf: 'application/pdf',
   md: 'text/markdown; charset=utf-8',
