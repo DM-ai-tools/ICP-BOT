@@ -59,6 +59,20 @@ export interface SectionSpec {
    * document failed — reporting one only teaches people to ignore warnings.
    */
   severity: 'critical' | 'cosmetic';
+  /**
+   * Whether this section is written as enumerated points rather than prose.
+   *
+   * The framework's own instruction is 'no shallow bullets', and that still
+   * holds — these are numbered points each carrying a full, developed passage,
+   * not fragments. What changes is only the shape: a reader can scan them,
+   * quote one, or lift a single point into a deck, none of which is possible
+   * with a 200-word block.
+   *
+   * Objections and the qualification checklist are already enumerated by the
+   * framework and keep their own counts. The title, avatar and jargon lines are
+   * single lines and stay that way.
+   */
+  numbered: boolean;
   /** Which generation pass produces it. */
   pass: 'A' | 'B' | 'C';
   /** Minimum substantive word count. 0 = structural check only. */
@@ -75,6 +89,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Title Line',
     level: 1,
     kind: 'title',
+    numbered: false,
     severity: 'cosmetic',
     pass: 'A',
     minWords: 0,
@@ -87,6 +102,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Avatar Name',
     level: 2,
     kind: 'oneline',
+    numbered: false,
     severity: 'cosmetic',
     pass: 'A',
     minWords: 0,
@@ -97,6 +113,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Local language & jargon applied',
     level: 2,
     kind: 'oneline',
+    numbered: false,
     severity: 'cosmetic',
     pass: 'A',
     minWords: 0,
@@ -108,6 +125,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Identity Snapshot',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'A',
     minWords: 120,
@@ -119,6 +137,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: "Current Reality (What's happening right now)",
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'A',
     minWords: 120,
@@ -131,6 +150,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'What They Say Out Loud',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'A',
     minWords: 120,
@@ -142,6 +162,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: "What's Actually True Under the Hood",
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'A',
     minWords: 120,
@@ -154,6 +175,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Goals and Desired Outcomes',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'B',
     minWords: 120,
@@ -165,6 +187,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Pains, Fears, and Risks',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'B',
     minWords: 120,
@@ -177,6 +200,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Marketing Problems They Face',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'B',
     minWords: 150,
@@ -188,6 +212,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: "Barriers and Uncertainties (Why they're stuck)",
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'B',
     minWords: 120,
@@ -200,6 +225,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Triggers That Move Them to the Next Level',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'B',
     minWords: 120,
@@ -211,6 +237,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Decision Criteria (How they choose)',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'C',
     minWords: 120,
@@ -223,6 +250,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'How They Research (Channels + behavior)',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'C',
     minWords: 120,
@@ -235,6 +263,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Objections (Top 8) + What It Really Means',
     level: 2,
     kind: 'objections',
+    numbered: false,
     severity: 'critical',
     pass: 'C',
     minWords: 160,
@@ -247,6 +276,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Market Opportunities and Positioning',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'C',
     minWords: 120,
@@ -258,6 +288,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Success Stories',
     level: 2,
     kind: 'stories',
+    numbered: true,
     severity: 'critical',
     pass: 'C',
     minWords: 120,
@@ -269,6 +300,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Average Deal Value of the Service',
     level: 2,
     kind: 'narrative',
+    numbered: true,
     severity: 'critical',
     pass: 'C',
     minWords: 80,
@@ -281,6 +313,7 @@ export const SECTIONS: SectionSpec[] = [
     heading: 'Qualification Checklist (Fast filters)',
     level: 2,
     kind: 'checklist',
+    numbered: false,
     severity: 'critical',
     pass: 'C',
     minWords: 60,
@@ -309,7 +342,14 @@ export function sectionByKey(key: SectionKey): SectionSpec {
 // badges in the browser and validate.ts holds the OpenAI repair call.
 // ---------------------------------------------------------------------------
 
-export type SectionStatus = 'ok' | 'missing' | 'thin' | 'wrong_count';
+export type SectionStatus =
+  | 'ok'
+  | 'missing'
+  | 'thin'
+  /** Wrong item count where the framework fixes one. */
+  | 'wrong_count'
+  /** Present and substantive, but written as prose where points were asked for. */
+  | 'unformatted';
 
 export interface SectionReport {
   key: SectionKey;

@@ -474,7 +474,24 @@ check(
 
 section('Validator');
 
+/**
+ * Narrative sections are enumerated points now, so the fixture must be too —
+ * a prose fixture would be testing a shape the product no longer produces.
+ */
 function makeSection(heading: string, words: number, level = 2): string {
+  const points = 5;
+  const per = Math.ceil(words / points);
+  const body = Array.from(
+    { length: points },
+    (p, index) =>
+      `${index + 1}. ` +
+      Array.from({ length: per }, (_, i) => `w${index}x${i}`).join(' '),
+  ).join('\n');
+  return `${'#'.repeat(level)} ${heading}\n\n${body}\n`;
+}
+
+/** The same section as an undifferentiated block of prose. */
+function makeProseSection(heading: string, words: number, level = 2): string {
   const body = Array.from({ length: words }, (_, i) => `word${i}`).join(' ');
   return `${'#'.repeat(level)} ${heading}\n\n${body}\n`;
 }
@@ -551,6 +568,71 @@ check(
   inspectDocument(missingDoc).find((r) => r.key === 'success_stories')?.status === 'missing',
 );
 
+// ---------------------------------------------------------------------------
+// Enumerated sections.
+//
+// Every section that used to be a wall of prose is now numbered points. The
+// risk this guards is content loss: a model told to "use points" can treat
+// that as permission to compress. Shape is therefore checked, but is never
+// allowed to fail a document on its own.
+// ---------------------------------------------------------------------------
+
+check(
+  'fourteen sections are enumerated',
+  SECTIONS.filter((s) => s.numbered).length === 14,
+  String(SECTIONS.filter((s) => s.numbered).length),
+);
+check(
+  'the five fixed-structure sections are left alone',
+  SECTIONS.filter((s) => !s.numbered).map((s) => s.key).sort().join(',') ===
+    'avatar_name,jargon_line,objections,qualification_checklist,title_line',
+  SECTIONS.filter((s) => !s.numbered).map((s) => s.key).sort().join(','),
+);
+
+// A long section written as prose is the wrong shape, not a bad section.
+const proseDoc = goodDoc.replace(
+  makeSection('Market Opportunities and Positioning', 150),
+  makeProseSection('Market Opportunities and Positioning', 150),
+);
+const proseReport = inspectDocument(proseDoc);
+check(
+  'prose in an enumerated section is flagged',
+  proseReport.find((r) => r.key === 'market_opportunities')?.status === 'unformatted',
+  proseReport.find((r) => r.key === 'market_opportunities')?.status,
+);
+check(
+  'but shape alone never fails the document',
+  reportFor(proseDoc).badge === 'complete',
+  reportFor(proseDoc).badge,
+);
+check(
+  'and it is never reported to the user',
+  reportFor(proseDoc).failedKeys.length === 0,
+);
+
+// Substance still outranks shape: a short section is thin, not merely unformatted.
+const shortProse = goodDoc.replace(
+  makeSection('Triggers That Move Them to the Next Level', 150),
+  makeProseSection('Triggers That Move Them to the Next Level', 20),
+);
+check(
+  'too-short still reports as thin, not unformatted',
+  inspectDocument(shortProse).find((r) => r.key === 'triggers')?.status === 'thin',
+);
+
+// Enumerated sections report how many points they carry.
+const pointCount = inspectDocument(goodDoc).find((r) => r.key === 'goals')?.count;
+check('enumerated sections report their point count', pointCount === 5, String(pointCount));
+
+// The fixed-structure sections must not have been disturbed.
+check(
+  'objections still require exactly eight',
+  inspectDocument(goodDoc).find((r) => r.key === 'objections')?.count === 8,
+);
+check(
+  'the checklist still requires 8-12',
+  inspectDocument(goodDoc).find((r) => r.key === 'qualification_checklist')?.count === 10,
+);
 // ---------------------------------------------------------------------------
 // Severity. A cosmetic shortfall must never reach the user.
 //

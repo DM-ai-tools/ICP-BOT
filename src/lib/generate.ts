@@ -131,17 +131,49 @@ function sectionInstruction(section: SectionSpec, index: number): string {
   const marker = section.level === 1 ? '#' : '##';
   const target =
     section.kind === 'narrative'
-      ? ` Minimum ${section.minWords} words of substance — full sentences and specifics, not shallow bullets.`
+      ? ` As numbered points. Minimum ${section.minWords} words of substance across the section.`
       : section.kind === 'objections'
         ? ' EXACTLY 8, numbered 1 to 8. Each: the objection in the buyer\'s own words, then "What it really means:" and the hidden meaning.'
         : section.kind === 'checklist'
           ? ' Between 8 and 12 yes/no qualifiers, as a numbered list.'
           : section.kind === 'stories'
-            ? ' Between 2 and 4 mini-narratives, each with a bolded lead-in. No invented hard numbers.'
+            ? ' Between 2 and 4 mini-narratives as numbered points, each opening with a bolded lead-in. No invented hard numbers.'
             : '';
 
   return `${index}. ${marker} ${section.heading}${target}`;
 }
+
+/**
+ * How enumerated sections must be written.
+ *
+ * The framework's own rule is "no shallow bullets", and that is preserved
+ * exactly: these are numbered points each carrying a full, developed passage.
+ * Only the shape changes. The failure mode this guards hardest against is a
+ * model treating "points" as permission to compress — a profile that loses half
+ * its substance to formatting is worse than a wall of prose.
+ */
+const ENUMERATION_RULES = `
+FORMAT — HOW EVERY SECTION IS WRITTEN
+
+Every section marked "As numbered points" is written as a numbered list: 1., 2., 3., and so on, each point
+starting on its own line.
+
+  - A point is NOT a bullet fragment. Each one is a developed passage of two to five full sentences carrying a
+    single idea all the way through, with the same specificity, jargon and regional voice the section would
+    have had as prose. If a point could be a heading on a slide with nothing underneath it, it is too thin.
+  - NOTHING IS DROPPED. This is a change of shape, not of substance. Every observation, motivation, phrase,
+    pressure and detail that would have appeared in the paragraph version must still appear inside one of the
+    points. Losing content to make the list tidy is the single worst outcome here.
+  - Use as many points as the material genuinely contains — typically four to eight. Do not pad to reach a
+    number, and do not compress two distinct ideas into one point to keep the list short.
+  - One short orienting sentence may precede the list where it genuinely helps. It is optional, never more
+    than a sentence, and never a summary of the points that follow.
+  - Do not nest sub-lists. One flat numbered sequence per section.
+  - Where the section calls for the buyer's own words, keep them in quotes inside the relevant point.
+
+Sections with their own fixed structure — the title line, avatar name, jargon line, the eight objections and
+the qualification checklist — keep exactly the structure the framework specifies.
+`.trim();
 
 function passTask(pass: PassId, ctx: GenerationContext): string {
   const sections = SECTIONS_BY_PASS[pass];
@@ -182,6 +214,8 @@ function passTask(pass: PassId, ctx: GenerationContext): string {
       'be exactly 8, and the Qualification Checklist must be the final section.',
     );
   }
+
+  header.push('', ENUMERATION_RULES);
 
   header.push(
     '',

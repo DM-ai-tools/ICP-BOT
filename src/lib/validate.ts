@@ -141,7 +141,9 @@ export function inspectDocument(markdown: string): SectionReport[] {
             ? 'wrong_count'
             : words < spec.minWords
               ? 'thin'
-              : 'ok';
+              : spec.numbered && countListItems(found.body) === 0
+                ? 'unformatted'
+                : 'ok';
         return {
           key: spec.key,
           heading: spec.heading,
@@ -153,14 +155,22 @@ export function inspectDocument(markdown: string): SectionReport[] {
       }
 
       case 'narrative':
-      default:
+      default: {
+        // Substance is checked first — a section that is too short is a real
+        // problem, whereas one that is long but written as prose is only the
+        // wrong shape and must not fail the document over it.
+        const points = countListItems(found.body);
+        const status: SectionStatus =
+          words < spec.minWords ? 'thin' : spec.numbered && points === 0 ? 'unformatted' : 'ok';
         return {
           key: spec.key,
           heading: spec.heading,
-          status: words < spec.minWords ? 'thin' : 'ok',
+          status,
           words,
+          count: spec.numbered ? points : undefined,
           expected: describeExpectation(spec.key),
         };
+      }
     }
   });
 }
@@ -175,7 +185,9 @@ function describeExpectation(key: SectionKey): string {
     case 'stories':
       return `${STORIES_MIN}–${STORIES_MAX} stories, ${spec.minWords}+ words`;
     case 'narrative':
-      return `${spec.minWords}+ words`;
+      return spec.numbered
+        ? `numbered points, ${spec.minWords}+ words total`
+        : `${spec.minWords}+ words`;
     case 'oneline':
       return 'one line';
     case 'title':
@@ -183,6 +195,27 @@ function describeExpectation(key: SectionKey): string {
     default:
       return 'present';
   }
+}
+
+/**
+ * Whether a section report is bad enough to fail the whole document.
+ *
+ * ONE definition, used by both validateAndRepair and reportFor. It lived in two
+ * places before and they drifted the moment a new status was added — the repair
+ * path stopped failing on `unformatted` while the read-only path still did, so
+ * the same document reported differently depending on which function you asked.
+ *
+ * Two things are deliberately excluded:
+ *  - cosmetic sections (title line, avatar name, jargon line), because a
+ *    formatting quirk there is not something a strategist can act on;
+ *  - `unformatted`, because that section is present and substantive and merely
+ *    written as prose. It still earns a repair attempt; it does not earn a
+ *    warning badge on a document that is otherwise complete.
+ */
+function isCriticalFailure(report: SectionReport): boolean {
+  if (report.status === 'ok') return false;
+  if (report.status === 'unformatted') return false;
+  return sectionByKey(report.key).severity === 'critical';
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +230,9 @@ function repairInstruction(report: SectionReport): string {
       ? 'It is missing from the document entirely.'
       : report.status === 'wrong_count'
         ? `It has ${report.count} items; it must have ${describeExpectation(report.key)}.`
-        : `It is too thin — ${report.words} words against a floor of ${spec.minWords}.`;
+        : report.status === 'unformatted'
+          ? 'It is written as prose but must be numbered points. The substance is fine — restructure it without losing any of it.'
+          : `It is too thin — ${report.words} words against a floor of ${spec.minWords}.`;
 
   return [
     `The section "${spec.heading}" needs rewriting. ${problem}`,
@@ -209,6 +244,15 @@ function repairInstruction(report: SectionReport): string {
     'Do not add a preamble, an apology, or a note about what you changed.',
     'Match the avatar, voice, region, jargon and awareness stage already established in the document.',
     'Full sentences and real specifics — this is a client-facing deliverable, not notes.',
+    ...(spec.numbered
+      ? [
+          '',
+          'FORMAT: numbered points — 1., 2., 3. — each starting on its own line. A point is two to five full',
+          'sentences carrying one idea all the way through, never a fragment. Use as many points as the material',
+          'genuinely contains. Carry over EVERY detail that belongs in this section: restructuring must not cost',
+          'content. One optional orienting sentence may precede the list. No nested sub-lists.',
+        ]
+      : []),
   ].join('\n');
 }
 
@@ -329,10 +373,7 @@ export async function validateAndRepair(
   // Only sections carrying real substance can fail a document. A title line
   // that reads slightly differently is not a defect a strategist needs to be
   // warned about, and surfacing it only teaches people to ignore warnings.
-  const stillFailing = finalSections.filter((r) => r.status !== 'ok');
-  const criticalFailures = stillFailing.filter(
-    (r) => sectionByKey(r.key).severity === 'critical',
-  );
+  const criticalFailures = finalSections.filter(isCriticalFailure);
 
   const failedKeys = criticalFailures.map((r) => r.key);
   const ok = failedKeys.length === 0;
@@ -369,11 +410,7 @@ function describeFailures(failures: SectionReport[]): string {
 /** Re-inspect stored markdown without calling the model. */
 export function reportFor(markdown: string): ValidationReport {
   const sections = inspectDocument(markdown);
-  // Same rule as validateAndRepair: only substantive sections can fail a
-  // document, so the two can never disagree about what 'complete' means.
-  const failedKeys = sections
-    .filter((s) => s.status !== 'ok' && sectionByKey(s.key).severity === 'critical')
-    .map((s) => s.key);
+  const failedKeys = sections.filter(isCriticalFailure).map((s) => s.key);
   return {
     sections,
     ok: failedKeys.length === 0,
