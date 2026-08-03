@@ -80,7 +80,7 @@ export default async function RunsPage() {
                         <span className="truncate">
                           Tailored to{' '}
                           <span className="capitalize text-fg-muted">{run.tailoredTo}</span>
-                          {run.tailoredSource === 'curated' && ' · curated'}
+                          {run.tailoredSource === 'curated' ? ' · curated' : ' · retrieved'}
                         </span>
                       </p>
                     )}

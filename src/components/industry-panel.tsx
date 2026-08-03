@@ -1,16 +1,19 @@
 'use client';
 
 /**
- * The industry panel.
+ * Industry intelligence.
  *
- * Shows the domain context the profiles were tailored with. It exists because
- * tailoring that happens invisibly is indistinguishable from tailoring that
- * did not happen — a strategist about to put this in front of a client needs to
- * see what the model was told about their vertical, and be able to disagree
- * with it.
+ * Shows the retrieved domain context the profiles were tailored with. It exists
+ * because tailoring that happens invisibly is indistinguishable from tailoring
+ * that did not happen — a strategist about to put this in front of a client
+ * needs to see what the model was told about their vertical, and be able to
+ * disagree with it.
  *
- * Curated packs are labelled as such, because "we wrote this for dental" and
- * "a model wrote this about dental" deserve different levels of trust.
+ * The retrieval layer is what makes this work: a query is built from the brief,
+ * matching intelligence is pulled from the persistent store, and the generation
+ * prompt is augmented with it before a single document is written. Sources are
+ * labelled, because "we wrote this for dental" and "this was assembled for
+ * dental" deserve different levels of trust.
  */
 import * as React from 'react';
 import { BookOpen, Check, Sparkles } from 'lucide-react';
@@ -41,7 +44,7 @@ export function IndustryPanel({
             label={
               pack.source === 'curated'
                 ? 'Hand-written for this vertical — not model-generated.'
-                : 'Researched once for this industry and cached for every future run.'
+                : 'Assembled once for this industry, then retrieved from the store on every future run.'
             }
             side="left"
           >
@@ -55,7 +58,7 @@ export function IndustryPanel({
                 ) : (
                   <>
                     <Sparkles className="size-2.5" />
-                    researched
+                    retrieved
                   </>
                 )}
               </Badge>
@@ -118,10 +121,22 @@ export function IndustryPanel({
           );
         })}
 
-        <p className="mt-5 px-2 text-2xs leading-relaxed text-fg-subtle/70">
-          Reference material only. It shapes language and specificity — it is never presented as a
-          fact about your business, and carries no figures by design.
-        </p>
+        <div className="mt-5 space-y-1.5 border-t border-line px-2 pt-3">
+          <p className="text-2xs font-semibold uppercase tracking-[0.09em] text-fg-subtle">
+            How this was assembled
+          </p>
+          <p className="text-2xs leading-relaxed text-fg-subtle/80">
+            Retrieval-augmented: the brief is turned into an industry query, matching intelligence is
+            retrieved from the store, and the generation prompt is augmented with it before any
+            document is written. Results persist, so every later run in this vertical reuses them.
+            Where a website was supplied, the site scraper also feeds verified company facts
+            alongside this.
+          </p>
+          <p className="text-2xs leading-relaxed text-fg-subtle/70">
+            Reference material only. It shapes language and specificity — it is never presented as a
+            fact about your business, and carries no figures by design.
+          </p>
+        </div>
       </div>
     </div>
   );

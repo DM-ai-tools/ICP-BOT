@@ -1,7 +1,17 @@
 /**
- * Industry context resolution.
+ * Industry intelligence retrieval.
  *
- * Order of preference, cheapest first:
+ * The retrieval half of a retrieval-augmented pipeline: a query is built from
+ * the brief (industry, region, business model, audience), matching domain
+ * intelligence is retrieved from the persistent store, and generate.ts augments
+ * the prompt with it before any document is written.
+ *
+ * The store is keyed rather than vector-indexed. For a corpus of a few dozen
+ * verticals that is strictly better — exact, instant, free to query and
+ * impossible to retrieve a wrong neighbour from. Swapping in embeddings later
+ * changes only the lookup below, not the contract around it.
+ *
+ * Retrieval order, cheapest first:
  *   1. an exact cache hit on the canonical key
  *   2. a hand-written curated pack for a vertical we actually sell into
  *   3. an alias hit on a previously generated pack
