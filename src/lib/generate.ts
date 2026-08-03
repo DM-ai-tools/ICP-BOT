@@ -85,6 +85,7 @@ export function buildInputBlock(ctx: GenerationContext): string {
     `Market/Region/Country: ${s.region?.trim() || 'Not specified'}`,
     `Business Model Selector: ${BUSINESS_MODEL_LABEL[model]}`,
     `Awareness level to generate: ${awarenessLabel(ctx.scenario)}`,
+    ...(s.target_role?.trim() ? [`Specific role to profile: ${s.target_role.trim()}`] : []),
     `Company size / revenue band of the ICP${model === 'b2c' ? ' (household/earning reality)' : ''}: ${
       s.size_band?.trim() || 'Not specified'
     }`,
@@ -109,6 +110,26 @@ function complianceGuardrail(slots: SlotValues): string | null {
     'Avoid guarantees and absolute outcome claims throughout. Use compliance-aware language: "may", "varies",',
     '"subject to suitability", "general information only". Do not imply clinical, financial or legal outcomes.',
     'Success Stories must read as plausible and hedged, never as promises, and must contain no invented figures.',
+  ].join(' ');
+}
+
+/**
+ * When a brief names several roles and then picks one, the pick wins.
+ *
+ * Observed failure: a brief said "clients are HR directors and hiring
+ * managers ... build me the ICP for the hiring manager", and the profile came
+ * back about an HR Director — the first role mentioned rather than the one
+ * actually asked for. A line in the inputs block was not enough by itself.
+ */
+function roleGuardrail(slots: SlotValues): string | null {
+  const role = slots.target_role?.trim();
+  if (!role) return null;
+
+  return [
+    `ROLE — the avatar in this document holds exactly one job title: ${role}.`,
+    "Not an adjacent role, not a more senior one, and not whoever else was mentioned in passing.",
+    `Their seniority, daily reality, pressures, language and objections must all be those of a ${role}.`,
+    "Other roles may appear only as members of the buying committee around them.",
   ].join(' ');
 }
 
@@ -256,6 +277,9 @@ export function buildUserMessage(
   blocks.push(`INPUTS\n${buildInputBlock(ctx)}`);
   blocks.push(pricingGuardrail(ctx.service));
   blocks.push(audienceGuardrail(ctx.slots));
+
+  const roleRule = roleGuardrail(ctx.slots);
+  if (roleRule) blocks.push(roleRule);
 
   const compliance = complianceGuardrail(ctx.slots);
   if (compliance) blocks.push(compliance);

@@ -49,6 +49,11 @@ For each awareness stage give:
   primaryObjection      The single objection that blocks the sale at this stage, in their voice.
 
 RULES
+  - EVERY COLUMN MUST VARY DOWN THE PAGE. bestChannel especially: naming the same channel for two stages
+    wastes the column and tells the reader nothing. Someone who does not know they have a problem is not
+    reachable the same way as someone comparing two vendors — differ on the format, the moment and the
+    intent, not just the platform name. If two stages genuinely share a platform, distinguish what is done
+    there ("industry conference keynote" versus "conference booth demo with a shortlist in hand").
   - Draw only from the documents given. Do not introduce new claims about the company.
   - Never invent a price or a statistic. If a figure is not in the source documents, do not use one.
   - Each cell is one tight sentence or clause. This is a table, not prose.

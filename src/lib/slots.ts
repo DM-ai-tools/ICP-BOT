@@ -40,6 +40,8 @@ export interface SlotValues {
   region?: string | null;
   business_model?: BusinessModel | null;
   awareness_level?: AwarenessKey | null;
+  /** The one role the ICP is for, when the user singles one out. */
+  target_role?: string | null;
   size_band?: string | null;
   notes?: string | null;
 }
@@ -91,6 +93,7 @@ export const slotValuesSchema = z.object({
       z.null(),
     ])
     .optional(),
+  target_role: nullableString,
   size_band: nullableString,
   notes: nullableString,
 });
@@ -200,6 +203,16 @@ export const SLOT_SPECS: SlotSpec[] = [
     required: true,
     askPriority: null, // has its own blocking modal
     optional: false,
+  },
+  {
+    // Never asked. Either the brief singles out a role or it does not, and
+    // spending a turn on it would break the under-8-questions budget for
+    // something most briefs settle implicitly.
+    key: 'target_role',
+    label: 'Role profiled',
+    required: false,
+    askPriority: null,
+    optional: true,
   },
   { key: 'offer_type', label: 'Offer type', required: false, askPriority: null, optional: true },
   { key: 'size_band', label: 'Size / revenue band', required: false, askPriority: null, optional: true },

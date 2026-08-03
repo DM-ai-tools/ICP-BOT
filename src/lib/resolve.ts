@@ -76,6 +76,11 @@ services            array | null    1..${SERVICE_CAP} objects: { "name": string,
                                     price_terms is verbatim from the user, e.g. "$2,500/month retainer".
                                     NEVER invent a price. If unstated, price_terms is null.
 region              string | null   Market/region/country, e.g. "Melbourne, Australia" or "United Kingdom".
+                                    PRESERVE EVERY LOCATION THE USER NAMES. "the multinationals around Cork
+                                    and Dublin" is "Cork and Dublin, Ireland" — NOT "Dublin, Ireland".
+                                    Dropping one half of a two-city territory silently removes a chunk of
+                                    someone's market, and it is often the larger half. If several cities,
+                                    states or countries are named, list them all and append the country.
 business_model      "b2c" | "b2b" | null
                                     Is the ICP a consumer/patient (b2c) or a business buyer/partner (b2b)?
 awareness_level     "unaware" | "problem_aware" | "solution_aware" | "product_aware" | "most_aware" | null
@@ -83,6 +88,11 @@ awareness_level     "unaware" | "problem_aware" | "solution_aware" | "product_aw
                                     the audience already knows they need the service and is comparing providers
                                     (product_aware), or has never heard of the category (unaware).
                                     If the user has not addressed awareness at all, leave it null.
+target_role         string | null   The SPECIFIC role the ICP should be built for, when the user names one.
+                                    Critical when they mention several and then choose: "clients are HR
+                                    directors and hiring managers ... build me the ICP for the hiring manager"
+                                    resolves to "Hiring manager", NOT "HR director". The chosen role wins over
+                                    the first role mentioned, always. Null if no single role was singled out.
 size_band           string | null   Company size / revenue band (B2B) or household/earning reality (B2C). Optional.
 notes               string | null   Constraints, exclusions, tone requests. Optional.
 `.trim();
@@ -176,7 +186,27 @@ ICP is has changed.
   "ambiguities": []
 }
 
---- Example 4 (vague, low confidence) ---
+--- Example 4 (several locations, several roles, one chosen) ---
+User: "We're a recruitment agency in Dublin. Clients are HR directors and hiring managers at the
+multinationals around Cork and Dublin. Build me the ICP for the hiring manager."
+Reasoning: two cities are named for the MARKET, so both are kept — truncating to Dublin would delete Cork,
+which is the larger cluster. Two roles are named but one is explicitly chosen, so target_role is the hiring
+manager and not the HR director that happened to be said first.
+{
+  "slots": {
+    "company_type": "agency", "audience_type": "direct_buyer",
+    "industry": "Recruitment", "region": "Cork and Dublin, Ireland",
+    "business_model": "b2b", "target_role": "Hiring manager"
+  },
+  "meta": {
+    "region": { "source": "stated", "confidence": 0.95, "justification": "Both cities named as the market." },
+    "target_role": { "source": "stated", "confidence": 0.96, "justification": "They asked for the hiring manager specifically." }
+  },
+  "missing": ["company_name", "services", "maturity_tier"],
+  "ambiguities": []
+}
+
+--- Example 5 (vague, low confidence) ---
 User: "help me build an ICP" then "we do B2B stuff, mostly software I guess, all over really"
 Reasoning: almost nothing is firm. "B2B stuff" is stated. "mostly software I guess" is hedged, so industry
 is inferred at low confidence and must be confirmed rather than assumed. "all over really" is too vague for
@@ -237,7 +267,7 @@ HARD RULES
 6. audience_type defaults to "direct_buyer" with source "default" whenever the conversation does not settle it.
 7. Set awareness_level ONLY when the conversation truly settles it. Do not infer it from industry or maturity.
 8. "missing" lists slot keys that are still null AND worth asking about. Never list: audience_type,
-   awareness_level, offer_type, size_band, notes.
+   awareness_level, offer_type, size_band, notes, target_role.
 9. If the user answers a question with "I don't know", "not sure" or similar, do NOT list that slot in
    "missing" again — either infer a sensible value at moderate confidence with source "inferred", or leave it
    null and record the deflection in "ambiguities". Never let the same gap be asked twice.
