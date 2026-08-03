@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { Brand } from '@/components/brand';
 import { BriefPanel } from '@/components/brief-panel';
+import { IndustryPanel } from '@/components/industry-panel';
 import { ChatPanel, type ThreadMessage } from '@/components/chat-panel';
 import { CommandPalette, useCommandPalette, type Command } from '@/components/command-palette';
 import { ResultsView, type LiveDoc } from '@/components/results-view';
@@ -67,6 +68,7 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
   const [live, setLive] = React.useState<Record<string, LiveDoc>>({});
   const [markdownById, setMarkdownById] = React.useState<Record<string, string>>({});
   const [generating, setGenerating] = React.useState(false);
+  const [packBuilding, setPackBuilding] = React.useState(false);
 
 
   const chatAbort = React.useRef<AbortController | null>(null);
@@ -178,6 +180,7 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
     generateAbort.current = controller;
 
     setGenerating(true);
+    setPackBuilding(true);
 
     try {
       await readSse<GenerateEvent>(
@@ -262,6 +265,10 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
               });
               break;
 
+            case 'industry':
+              setPackBuilding(false);
+              break;
+
             case 'state':
               setState(event.state);
               break;
@@ -285,6 +292,7 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
       }
     } finally {
       setGenerating(false);
+      setPackBuilding(false);
     }
   }
 
@@ -400,15 +408,76 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasResults]);
 
+  /**
+   * The right rail carries two panels rather than becoming a fourth column.
+   *
+   * A separate column for industry context would take width from the document,
+   * which is the thing people are actually here to read — and the two are never
+   * needed at once: the brief matters while the conversation is happening, the
+   * industry context matters once profiles exist.
+   */
+  const [railTab, setRailTab] = React.useState<'brief' | 'industry'>('brief');
+
+  // Reveal the industry panel once tailoring lands, but only the first time and
+  // never over the top of someone who has deliberately switched back.
+  const railAutoSwitched = React.useRef(false);
+  React.useEffect(() => {
+    if (railAutoSwitched.current || !state.industryPack) return;
+    railAutoSwitched.current = true;
+    setRailTab('industry');
+  }, [state.industryPack]);
+
   const brief = (
-    <BriefPanel
-      state={state}
-      onEdit={editSlot}
-      onBuild={() => void startGeneration(DEFAULT_SCENARIOS)}
-      busy={generating}
-      docked={docked}
-      onDock={(next: boolean) => dockTo(next ? 'right' : 'float')}
-    />
+    <div className="flex h-full min-h-0 w-full flex-col border-l border-line bg-surface-2">
+      <div className="flex shrink-0 items-center gap-0.5 border-b border-line px-2 pt-1.5">
+        {([
+          { key: 'brief' as const, label: 'Brief' },
+          { key: 'industry' as const, label: 'Industry' },
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setRailTab(tab.key)}
+            aria-selected={railTab === tab.key}
+            className={cn(
+              'relative rounded-t-sm px-2.5 pb-2 pt-1 text-xs font-medium transition-colors duration-fast',
+              railTab === tab.key ? 'text-fg' : 'text-fg-muted hover:text-fg-secondary',
+            )}
+          >
+            {tab.label}
+            {tab.key === 'industry' && state.industryPack && (
+              <span className="ml-1.5 inline-block size-1.5 rounded-full bg-accent align-middle" />
+            )}
+            <span
+              aria-hidden
+              className={cn(
+                'absolute inset-x-1.5 -bottom-px h-0.5 origin-left rounded-full bg-accent transition-transform duration-base ease-snap',
+                railTab === tab.key ? 'scale-x-100' : 'scale-x-0',
+              )}
+            />
+          </button>
+        ))}
+      </div>
+
+      <div className="min-h-0 flex-1">
+        {railTab === 'brief' ? (
+          <BriefPanel
+            state={state}
+            onEdit={editSlot}
+            onBuild={() => void startGeneration(DEFAULT_SCENARIOS)}
+            busy={generating}
+            docked={docked}
+            onDock={(next: boolean) => dockTo(next ? 'right' : 'float')}
+          />
+        ) : (
+          <IndustryPanel
+            pack={state.industryPack}
+            building={packBuilding}
+            industryLabel={state.slots.industry ?? null}
+          />
+        )}
+      </div>
+    </div>
   );
 
   // ---- commands ------------------------------------------------------------

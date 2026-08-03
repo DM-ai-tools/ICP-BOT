@@ -51,6 +51,10 @@ model Run {
   /// immutable and versioned; documents record which version produced them.
   masterPromptVersion String
 
+  /// The industry context pack this run was tailored with, if one resolved.
+  industryPackId String?
+  industryPack   IndustryPack? @relation(fields: [industryPackId], references: [id], onDelete: SetNull)
+
   /// Set once the awareness modal has been answered (or awareness was settled
   /// in conversation and the modal was skipped).
   awarenessResolvedInChat Boolean @default(false)
@@ -102,7 +106,7 @@ model Document {
   serviceName  String
 
   /// Internal scenario key, e.g. "problem_aware".
-  scenario String
+  scenario       String
   /// The master prompt's exact wording, e.g. "Only Problem-Aware".
   awarenessLabel String
 
@@ -127,6 +131,11 @@ model Document {
 
   /// Snapshot of the slots used, so an edited brief never rewrites history.
   slotsSnapshot Json?
+
+  /// Which industry pack shaped this document. Kept per document because a
+  /// rebuild after an industry edit must not silently claim the old tailoring.
+  industryPackId String?
+  industryPack   IndustryPack? @relation(fields: [industryPackId], references: [id], onDelete: SetNull)
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -163,6 +172,53 @@ model Comparison {
   @@index([runId])
 }
 
+/// A reusable block of domain context for one industry, in one region, for one
+/// business model and audience type.
+///
+/// Cached because the same pack serves every future run in that combination —
+/// a second Melbourne dental B2B run costs nothing. Curated packs are written
+/// by hand for the verticals we actually sell into; anything else is generated
+/// once and stored beside them.
+model IndustryPack {
+  id String @id @default(cuid())
+
+  /// Cache key: canonicalIndustry|region|businessModel|audienceType
+  key String @unique
+
+  /// Canonical label, e.g. "dental". What the user typed is kept separately so
+  /// the panel can show both.
+  canonicalIndustry String
+  industryRaw       String
+  /// Other phrasings that resolve to this pack — "dentists", "dental clinics".
+  aliases           Json   @default("[]")
+
+  region        String
+  businessModel String
+  audienceType  String
+
+  /// curated | generated
+  source    String
+  curatedId String?
+
+  /// The pack itself (see src/lib/industry-types.ts).
+  content Json
+
+  /// How many runs have used it. Drives the admin hit-rate figure.
+  useCount Int @default(0)
+
+  promptTokens     Int   @default(0)
+  completionTokens Int   @default(0)
+  costUsd          Float @default(0)
+
+  runs      Run[]
+  documents Document[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([canonicalIndustry])
+}
+
 /// Instance-wide settings, set from the admin panel.
 ///
 /// A key/value table rather than columns on a singleton row: settings are read
@@ -176,7 +232,7 @@ model Setting {
 
 /// Per-call token and cost logging.
 model UsageLog {
-  id    String @id @default(cuid())
+  id    String  @id @default(cuid())
   runId String?
   run   Run?    @relation(fields: [runId], references: [id], onDelete: Cascade)
 
@@ -190,7 +246,7 @@ model UsageLog {
   costUsd          Float @default(0)
 
   durationMs Int?
-  attempts   Int  @default(1)
+  attempts   Int     @default(1)
   ok         Boolean @default(true)
   detail     String?
 

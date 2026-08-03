@@ -6,6 +6,7 @@
 import type { AwarenessKey, SlotKey, SlotMeta, SlotValues } from './slots';
 import type { SectionReport } from './sections';
 import type { ComparisonRow } from './comparison';
+import type { IndustryPackSummary } from './industry-types';
 
 export type DocumentStatus =
   | 'pending'
@@ -65,6 +66,8 @@ export interface RunState {
   };
   regulated: boolean;
   regulatedReason: string | null;
+  /** The industry pack this run was tailored with, if one resolved. */
+  industryPack: IndustryPackSummary | null;
   siteFetchStatus: string | null;
   siteFetchedUrl: string | null;
   masterPromptVersion: string;
@@ -85,6 +88,9 @@ export interface RunListItem {
   region: string | null;
   documentCount: number;
   completeCount: number;
+  /** Canonical industry the run was tailored toward, for the history line. */
+  tailoredTo: string | null;
+  tailoredSource: 'curated' | 'generated' | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -117,6 +123,7 @@ export type GenerateEvent =
     }
   | { type: 'doc_error'; docKey: string; text: string }
   | { type: 'doc_skipped'; docKey: string; documentId: string; reason: string }
+  | { type: 'industry'; pack: IndustryPackSummary; built: boolean }
   | { type: 'comparison'; comparison: ComparisonSummary }
   | { type: 'state'; state: RunState }
   | { type: 'error'; text: string }

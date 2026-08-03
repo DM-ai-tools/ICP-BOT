@@ -39,6 +39,7 @@ export type CallKind =
   | 'generate_c'
   | 'repair'
   | 'compare'
+  | 'industry_pack'
   | 'title';
 
 export interface Usage {

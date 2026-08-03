@@ -8,6 +8,7 @@ import 'server-only';
 import { prisma } from './db';
 import { masterPromptVersion } from './master-prompt';
 import { markdownToPlainText } from './markdown';
+import { toSummary } from './industry';
 import { awarenessLabel, type AwarenessKey } from './awareness';
 import {
   computeReadiness,
@@ -42,6 +43,7 @@ export async function loadRun(runId: string) {
   return prisma.run.findUnique({
     where: { id: runId },
     include: {
+      industryPack: true,
       messages: { orderBy: { seq: 'asc' } },
       documents: { orderBy: [{ serviceIndex: 'asc' }, { createdAt: 'asc' }] },
       comparisons: { orderBy: { serviceIndex: 'asc' } },
@@ -138,6 +140,7 @@ export function serialiseRun(run: LoadedRun): RunState {
     },
     regulated: run.regulated,
     regulatedReason: run.regulatedReason,
+    industryPack: run.industryPack ? toSummary(run.industryPack) : null,
     siteFetchStatus: run.siteFetchStatus,
     siteFetchedUrl: run.siteFetchedUrl,
     masterPromptVersion: run.masterPromptVersion,
@@ -164,7 +167,10 @@ export async function listRuns(limit = 60): Promise<RunListItem[]> {
   const runs = await prisma.run.findMany({
     orderBy: { updatedAt: 'desc' },
     take: limit,
-    include: { documents: { select: { status: true } } },
+    include: {
+      documents: { select: { status: true } },
+      industryPack: { select: { canonicalIndustry: true, source: true } },
+    },
   });
 
   return runs.map((run) => {
@@ -178,6 +184,13 @@ export async function listRuns(limit = 60): Promise<RunListItem[]> {
       documentCount: run.documents.length,
       completeCount: run.documents.filter((d) => d.status === 'complete' || d.status === 'repaired')
         .length,
+      tailoredTo: run.industryPack?.canonicalIndustry ?? null,
+      tailoredSource:
+        run.industryPack?.source === 'curated'
+          ? 'curated'
+          : run.industryPack
+            ? 'generated'
+            : null,
       updatedAt: run.updatedAt.toISOString(),
       createdAt: run.createdAt.toISOString(),
     };

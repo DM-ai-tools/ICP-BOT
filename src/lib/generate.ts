@@ -38,6 +38,8 @@ export interface GenerationContext {
   scenario: AwarenessKey;
   /** Grounded website text, already wrapped by verifiedContextBlock(). */
   verifiedContext?: string | null;
+  /** Industry reference block from resolveIndustryPack(), if one resolved. */
+  industryContext?: string | null;
   /** One line assembled from the conversation. */
   whyFraming: string;
   signal?: AbortSignal;
@@ -243,6 +245,12 @@ export function buildUserMessage(
 
   if (ctx.verifiedContext?.trim()) {
     blocks.push(ctx.verifiedContext.trim());
+  }
+
+  // Sits before the inputs so the model reads the vocabulary of the industry
+  // before it reads the specifics of the business.
+  if (ctx.industryContext?.trim()) {
+    blocks.push(ctx.industryContext.trim());
   }
 
   blocks.push(`INPUTS\n${buildInputBlock(ctx)}`);

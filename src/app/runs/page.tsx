@@ -70,6 +70,20 @@ export default async function RunsPage() {
                         year: 'numeric',
                       })}
                     </p>
+
+                    {/* Which vertical the profiles were actually tailored to.
+                        Deliberately quiet — it confirms tailoring happened
+                        without competing with the run's own name. */}
+                    {run.tailoredTo && (
+                      <p className="mt-1 flex items-center gap-1.5 truncate text-2xs text-fg-subtle">
+                        <span className="inline-block size-1 shrink-0 rounded-full bg-accent/70" />
+                        <span className="truncate">
+                          Tailored to{' '}
+                          <span className="capitalize text-fg-muted">{run.tailoredTo}</span>
+                          {run.tailoredSource === 'curated' && ' · curated'}
+                        </span>
+                      </p>
+                    )}
                   </Link>
 
                   <div className="flex shrink-0 items-center gap-2">

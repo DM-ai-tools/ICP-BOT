@@ -19,6 +19,7 @@ import {
   generateDocument,
   type GenerationContext,
 } from '@/lib/generate';
+import { industryContextBlock, resolveIndustryPack } from '@/lib/industry';
 import { masterPromptVersion } from '@/lib/master-prompt';
 import { describeError, friendlyError } from '@/lib/openai';
 import {
@@ -95,6 +96,27 @@ export async function POST(request: Request) {
     const firstUserMessage = history.find((m) => m.role === 'user')?.content ?? null;
     const whyFraming = buildWhyFraming(slots, firstUserMessage);
     const version = masterPromptVersion();
+
+    // Resolved once, before the worker pool starts. Four scenarios generating
+    // concurrently would otherwise each miss the cache and each pay to build
+    // the same pack. Best-effort throughout: a null pack means the run proceeds
+    // exactly as it did before this feature existed.
+    const industryPack = await resolveIndustryPack({ runId, slots, signal });
+    const industryContext = industryPack
+      ? industryContextBlock(industryPack.summary.content, industryPack.summary.industryRaw)
+      : null;
+
+    if (industryPack) {
+      await prisma.run.update({
+        where: { id: runId },
+        data: { industryPackId: industryPack.id },
+      });
+      writer.send({
+        type: 'industry',
+        pack: industryPack.summary,
+        built: industryPack.built,
+      });
+    }
 
     // Answering the modal is what unblocks generation; record it.
     await prisma.run.update({
@@ -184,6 +206,7 @@ export async function POST(request: Request) {
           status: 'generating',
           masterPromptVersion: version,
           slotsSnapshot: slots as object,
+          industryPackId: industryPack?.id ?? null,
         },
         update: {
           status: 'generating',
@@ -195,6 +218,7 @@ export async function POST(request: Request) {
           errorMessage: null,
           masterPromptVersion: version,
           slotsSnapshot: slots as object,
+          industryPackId: industryPack?.id ?? null,
         },
       });
 
@@ -204,6 +228,7 @@ export async function POST(request: Request) {
         service: job.service,
         scenario: job.scenario,
         verifiedContext: siteContext,
+        industryContext,
         whyFraming,
         signal,
       };
