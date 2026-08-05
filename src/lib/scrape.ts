@@ -14,6 +14,18 @@ export interface ScrapeResult {
   text: string | null;
   title: string | null;
   reason?: string;
+  /**
+   * The server answered with a page, even if that page carried too little
+   * readable text to ground company facts.
+   *
+   * These are different failures and were being treated as one. A site that
+   * renders its copy in JavaScript still ships its navigation as ordinary
+   * anchors, so discovery can read it perfectly while grounding cannot — and
+   * on Railway that is exactly what happens with trafficradius.com.au, which
+   * serves a full page locally and a near-empty shell from a datacenter IP.
+   * Skipping discovery because grounding failed cost the whole feature there.
+   */
+  reachable: boolean;
 }
 
 /**
@@ -130,7 +142,7 @@ export async function fetchPage(
 export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
   const page = await fetchPage(rawUrl);
   if (!page.ok || !page.html) {
-    return { ok: false, url: page.url, text: null, title: null, reason: page.reason };
+    return { ok: false, reachable: false, url: page.url, text: null, title: null, reason: page.reason };
   }
 
   const { text, title } = extractText(page.html);
@@ -138,6 +150,7 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
   if (!text || text.length < 120) {
     return {
       ok: false,
+      reachable: true,
       url: page.url,
       text: null,
       title,
@@ -145,7 +158,7 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
     };
   }
 
-  return { ok: true, url: page.url, text: text.slice(0, MAX_TEXT_CHARS), title };
+  return { ok: true, reachable: true, url: page.url, text: text.slice(0, MAX_TEXT_CHARS), title };
 }
 
 /**

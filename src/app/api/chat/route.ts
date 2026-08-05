@@ -169,11 +169,41 @@ export async function POST(request: Request) {
             meta = remerged.meta;
             changedSlots = [...new Set([...changedSlots, ...remerged.changed])];
             missing = reresolved.missing;
+          } else {
+            // Logged, not just recorded. A fetch that works from a laptop and
+            // fails from the deployed container is the hardest kind of failure
+            // to reason about from the outside, and the reason is the whole
+            // diagnosis — 403 means a firewall, ENOTFOUND means DNS, a timeout
+            // means the page is too slow or too large from this region.
+            console.error(
+              `[chat] site fetch failed for ${url}: ${scraped.reason ?? 'unknown'}`,
+            );
+            await prisma.run.update({
+              where: { id: runId },
+              data: { siteFetchStatus: 'failed' },
+            });
+            // Mentioned exactly once, then never again.
+            if (!run.siteNoticeShown) {
+              siteNotice =
+                `their website ${scraped.reason ?? 'could not be read'}, so no company facts were pulled from it — ` +
+                `I am working from what they told me. Everything else is unaffected`;
+              await prisma.run.update({
+                where: { id: runId },
+                data: { siteNoticeShown: true },
+              });
+            }
+          }
 
-            // Read the rest of the site while we are here. A broker with
-            // seventeen loan products and a dentist with one are the same shape
-            // of brief until someone looks; this is that look. Everything about
-            // it is best-effort — a failure leaves the run exactly as it was.
+          // Discovery runs on REACHABILITY, not on grounding.
+          //
+          // These are separate questions and were wired together. Grounding
+          // needs readable prose; discovery needs anchors, and a site that
+          // renders its copy in JavaScript still ships its navigation as plain
+          // links. trafficradius.com.au serves a full page to a laptop and a
+          // near-empty shell to a datacenter IP — grounding fails there and
+          // discovery works perfectly, but nesting the second inside the first
+          // meant the picker never appeared in production at all.
+          if (scraped.reachable) {
             await prisma.run.update({
               where: { id: runId },
               data: { discoveryStatus: 'pending' },
@@ -199,34 +229,11 @@ export async function POST(request: Request) {
               });
             }
           } else {
-            // Logged, not just recorded. A fetch that works from a laptop and
-            // fails from the deployed container is the hardest kind of failure
-            // to reason about from the outside, and the reason is the whole
-            // diagnosis — 403 means a firewall, ENOTFOUND means DNS, a timeout
-            // means the page is too slow or too large from this region.
-            console.error(
-              `[chat] site fetch failed for ${url}: ${scraped.reason ?? 'unknown'}`,
-            );
-            // An unreadable site now costs two things, not one: no grounded
-            // company facts, and no sub-service check. Record the second
-            // explicitly — a strategist who is never offered the scope choice
-            // must be able to find out why, rather than assume the site sells
-            // one thing.
+            // Genuinely unreachable — nothing to discover from.
             await prisma.run.update({
               where: { id: runId },
-              data: { siteFetchStatus: 'failed', discoveryStatus: 'failed' },
+              data: { discoveryStatus: 'failed' },
             });
-            // Mentioned exactly once, then never again.
-            if (!run.siteNoticeShown) {
-              siteNotice =
-                `their website ${scraped.reason ?? 'could not be read'}, so nothing was pulled from it and I could not ` +
-                `check whether they sell several distinct services — I am working from what they told me. ` +
-                `Everything else is unaffected`;
-              await prisma.run.update({
-                where: { id: runId },
-                data: { siteNoticeShown: true },
-              });
-            }
           }
         }
       } catch (err) {
