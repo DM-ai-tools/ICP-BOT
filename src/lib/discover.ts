@@ -107,11 +107,40 @@ export function isNotAService(path: string): boolean {
 }
 
 /**
- * Substrings that usually mark an offer. Used to rank, never to exclude —
- * plenty of sites name a service page with no marker at all.
+ * Extra offer markers, on top of SERVICE_TOKENS. Used to rank, never to
+ * exclude — plenty of sites name a service page with no marker at all.
  */
 const LOOKS_LIKE_SERVICE =
-  /(services?|solutions?|products?|offerings?|what-we-do|loans?|finance|financing|lending|mortgage|insurance|treatments?|practice-areas?|areas?-of-(?:practice|law)|specialti?es|expertise|capabilities)/i;
+  /(solutions?|products?|offerings?|what-we-do|practice-areas?|areas?-of-(?:practice|law)|specialti?es|expertise|capabilities|agency)/i;
+
+/**
+ * Does this text name a service?
+ *
+ * Reuses the same vocabulary the exclusion rescue uses, which matters: the old
+ * ranking regex listed lending and healthcare words but not one marketing word
+ * — no "marketing", no "seo", no "ads", no "design" — so on a digital agency's
+ * site it matched almost nothing and every real offer ranked on path depth
+ * alone. The two rules must draw on the same list or they disagree about what
+ * a service even is.
+ */
+/**
+ * Place names, for spotting location variants of one offer.
+ *
+ * Australian first because that is who this serves, plus the generic markers
+ * that travel: "near me", "in <somewhere>".
+ */
+const PLACE_NAME =
+  /\b(melbourne|sydney|brisbane|perth|adelaide|canberra|hobart|darwin|geelong|newcastle|wollongong|ballarat|bendigo|townsville|cairns|toowoomba|gold\s?coast|sunshine\s?coast|richmond|nsw|vic|qld|wa|sa|tas|nt|act|australia|auckland|wellington|near\s?me)\b/i;
+
+function hasServiceToken(text: string): boolean {
+  return text
+    .toLowerCase()
+    .split(/[/\-_.\s]+/)
+    .some((token) => SERVICE_TOKENS.has(token));
+}
+
+const normalise = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 
 interface Candidate {
   url: string;
@@ -233,7 +262,8 @@ function rankCandidates(links: { url: string; text: string }[], rootUrl: string)
     if (depth > 4) continue;
 
     let score = 0;
-    if (LOOKS_LIKE_SERVICE.test(path)) score += 5;
+    if (hasServiceToken(path)) score += 6;
+    if (LOOKS_LIKE_SERVICE.test(path)) score += 4;
     if (depth === 2) score += 3; // /services/first-home-loans — the classic shape
     if (depth === 1) score += 3; // /first-home-buyer — just as common
     // The anchor text is the strongest signal on the page. A site that sells
@@ -242,7 +272,8 @@ function rankCandidates(links: { url: string; text: string }[], rootUrl: string)
     if (link.text) {
       score += 2;
       if (link.text.length <= 40) score += 3;
-      if (LOOKS_LIKE_SERVICE.test(link.text)) score += 3;
+      if (hasServiceToken(link.text)) score += 4;
+      if (LOOKS_LIKE_SERVICE.test(link.text)) score += 2;
       if (isNotAService(link.text)) score -= 8;
     }
     // Digits in the last segment usually mean pagination or an ID.
@@ -456,6 +487,77 @@ async function buildCatalogue(
       url: raw.source_url?.trim() || null,
     });
     if (services.length >= 50) break;
+  }
+
+  return backfillFromNavigation(services, candidates);
+}
+
+/**
+ * Put back anything the navigation named and the model did not return.
+ *
+ * The model is not a reliable enumerator. Two identical runs against the same
+ * agency site returned 37 offers and 33, and "Social Media Marketing" was in
+ * one and not the other — so which services a strategist could even see came
+ * down to a coin flip. That is worse than a short list, because nothing about
+ * the result says anything is missing.
+ *
+ * So the navigation decides what exists and the model decides what to call it.
+ * Any candidate the site labelled with its own link text, and that nothing in
+ * the returned catalogue covers, is appended under that label. Slightly
+ * redundant entries are an acceptable price; a service the strategist never
+ * learns about is not.
+ */
+function backfillFromNavigation(
+  services: DiscoveredService[],
+  candidates: Candidate[],
+): DiscoveredService[] {
+  const names = services.map((s) => normalise(s.name)).filter(Boolean);
+  const urls = new Set(services.map((s) => (s.url ?? '').replace(/\/$/, '')).filter(Boolean));
+  const slugs = new Set(services.map((s) => s.slug));
+
+  const covers = (label: string) => {
+    const key = normalise(label);
+    if (!key) return true;
+    // One name containing the other is the same offer worded longer:
+    // "Local SEO" and "Local SEO Services". Two that merely overlap are not:
+    // "Social Media Marketing" and "Organic Social Media Management".
+    return names.some((name) => name === key || name.includes(key) || key.includes(name));
+  };
+
+  for (const candidate of candidates) {
+    if (services.length >= 50) break;
+
+    const label = candidate.anchorText.trim();
+    if (label.length < 3 || label.length > 60) continue;
+    // A sentence is body copy, not a menu item.
+    if (label.split(/\s+/).length > 7) continue;
+    if (isNotAService(label)) continue;
+    // Only put back things that plainly name a service. Backfill exists to
+    // recover offers the model dropped, not to pad the list with every link on
+    // the page — and a padded list crowds out the recovery it was added for.
+    if (!hasServiceToken(label) && !hasServiceToken(candidate.url)) continue;
+    // "SEO Melbourne" and "SEO Perth" are one offer sold in two cities, not two
+    // offers. The model collapses these correctly in its own output; without
+    // this the backfill puts all eight of them straight back and they crowd out
+    // the real offers this list is capped at.
+    if (PLACE_NAME.test(label)) continue;
+    // A bare nav parent — the "SERVICES" menu heading itself.
+    if (SERVICE_TOKENS.has(normalise(label).replace(/\s+/g, ''))) continue;
+    if (urls.has(candidate.url.replace(/\/$/, ''))) continue;
+    if (covers(label)) continue;
+
+    const slug = slugifyService(label);
+    if (slugs.has(slug)) continue;
+
+    slugs.add(slug);
+    names.push(normalise(label));
+    services.push({
+      name: label,
+      slug,
+      group: null,
+      summary: '',
+      url: candidate.url,
+    });
   }
 
   return services;
