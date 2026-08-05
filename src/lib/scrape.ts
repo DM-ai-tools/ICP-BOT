@@ -95,7 +95,7 @@ export async function fetchPage(
         ok: false,
         url: url.toString(),
         html: null,
-        reason: `site returned ${response?.status ?? 'no response'}`,
+        reason: describeStatus(response?.status),
       };
     }
 
@@ -138,6 +138,22 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
   }
 
   return { ok: true, url: page.url, text: text.slice(0, MAX_TEXT_CHARS), title };
+}
+
+/**
+ * A status code turned into something a strategist can act on.
+ *
+ * "site returned 403" reads like a broken tool. It usually means the site's
+ * firewall declined us, which is a different problem with a different answer —
+ * and worth saying, because the same site often answers fine an hour later.
+ */
+function describeStatus(status: number | undefined): string {
+  if (status === undefined) return 'could not be reached';
+  if (status === 403 || status === 401) return 'blocked us at its firewall (403)';
+  if (status === 429) return 'is rate-limiting requests right now (429)';
+  if (status === 404) return 'returned "page not found" (404) — check the address';
+  if (status >= 500) return `is having server trouble (${status})`;
+  return `returned ${status}`;
 }
 
 function isPrivateHost(hostname: string): boolean {

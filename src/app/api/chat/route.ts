@@ -199,13 +199,21 @@ export async function POST(request: Request) {
               });
             }
           } else {
+            // An unreadable site now costs two things, not one: no grounded
+            // company facts, and no sub-service check. Record the second
+            // explicitly — a strategist who is never offered the scope choice
+            // must be able to find out why, rather than assume the site sells
+            // one thing.
             await prisma.run.update({
               where: { id: runId },
-              data: { siteFetchStatus: 'failed' },
+              data: { siteFetchStatus: 'failed', discoveryStatus: 'failed' },
             });
             // Mentioned exactly once, then never again.
             if (!run.siteNoticeShown) {
-              siteNotice = `their website ${scraped.reason ?? 'could not be read'}, so nothing was pulled from it — it changes nothing else`;
+              siteNotice =
+                `their website ${scraped.reason ?? 'could not be read'}, so nothing was pulled from it and I could not ` +
+                `check whether they sell several distinct services — I am working from what they told me. ` +
+                `Everything else is unaffected`;
               await prisma.run.update({
                 where: { id: runId },
                 data: { siteNoticeShown: true },
