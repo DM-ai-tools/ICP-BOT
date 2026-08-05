@@ -120,10 +120,12 @@ export async function fetchPage(
     }
 
     const contentType = response.headers.get('content-type') ?? '';
-    const wantsXml = /xml/i.test(opts.accept ?? '');
-    const typeOk = wantsXml
+    const accept = opts.accept ?? '';
+    const typeOk = /xml/i.test(accept)
       ? /xml|text\/plain/i.test(contentType)
-      : /text\/html|application\/xhtml/i.test(contentType);
+      : /text\/plain/i.test(accept)
+        ? /text\/plain|text\//i.test(contentType)
+        : /text\/html|application\/xhtml/i.test(contentType);
     if (!typeOk) {
       return { ok: false, url: url.toString(), html: null, reason: 'unexpected content type' };
     }

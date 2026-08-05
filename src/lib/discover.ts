@@ -158,10 +158,17 @@ export async function discoverServices(
       return { status: 'failed', services: [], pagesRead: 0, reason: home.reason };
     }
 
-    const candidates = rankCandidates([
-      ...extractLinks(home.html, home.url),
-      ...(await sitemapLinks(home.url)),
-    ], home.url);
+    const navLinks = extractLinks(home.html, home.url);
+    const mapLinks = await sitemapLinks(home.url);
+    const candidates = rankCandidates([...navLinks, ...mapLinks], home.url);
+
+    // Logged because these three numbers are the entire diagnosis when a site
+    // behaves differently in production. A homepage that yields no links is
+    // being served as a JavaScript shell; a sitemap that yields none as well
+    // means there is genuinely nothing to read.
+    console.info(
+      `[discover] ${home.url} — nav=${navLinks.length} sitemap=${mapLinks.length} ranked=${candidates.length}`,
+    );
 
     if (candidates.length === 0) {
       return { status: 'single', services: [], pagesRead: 1 };
@@ -199,7 +206,24 @@ async function sitemapLinks(rootUrl: string): Promise<{ url: string; text: strin
 
   const found: { url: string; text: string }[] = [];
 
-  for (const path of ['/sitemap.xml', '/sitemap_index.xml']) {
+  // robots.txt names the real sitemap on sites that put it somewhere unusual,
+  // and costs one request to check. Tried first because it is authoritative.
+  const paths = ['/sitemap.xml', '/sitemap_index.xml', '/wp-sitemap.xml', '/page-sitemap.xml'];
+  const robots = await fetchPage(`${origin}/robots.txt`, {
+    timeoutMs: PAGE_TIMEOUT_MS,
+    accept: 'text/plain',
+  });
+  if (robots.ok && robots.html) {
+    for (const match of robots.html.matchAll(/^\s*sitemap:\s*(\S+)/gim)) {
+      try {
+        paths.unshift(new URL(match[1]).pathname);
+      } catch {
+        /* a malformed Sitemap: line is not worth failing over */
+      }
+    }
+  }
+
+  for (const path of [...new Set(paths)]) {
     const res = await fetchPage(`${origin}${path}`, {
       timeoutMs: PAGE_TIMEOUT_MS,
       accept: 'application/xml,text/xml',
