@@ -34,6 +34,7 @@ import { buildResolverUserMessage } from '../src/lib/resolve';
 import { buildXlsx, flattenMarkdown, heightFor } from '../src/lib/xlsx';
 import { SELECTABLE_FORMATS } from '../src/lib/export-service';
 import { extractLinks, pageSummary } from '../src/lib/scrape';
+import { isNotAService } from '../src/lib/discover';
 import { passesFor, sectionsForPass } from '../src/lib/sections';
 import {
   MIN_SERVICES_TO_ASK,
@@ -957,6 +958,44 @@ check('page heading is read and decoded', summarised.heading === 'Truck & Traile
 check('meta description is read', summarised.description === 'Finance for owner-drivers.');
 
 check('slugs are stable and filename-safe', slugifyService('First Home Buyer Loans & Schemes') === 'first-home-buyer-loans-and-schemes');
+
+// The page-type filter, asserted by the failure it actually caused.
+//
+// "media" as a substring deleted every social service a digital agency sells —
+// three real offers, invisible in the picker, no error anywhere. Whole-token
+// matching with a service-word rescue is what fixes it, and these cases are the
+// proof. A wrongly-kept page costs one prompt line; a wrongly-dropped page is a
+// service the strategist never learns exists.
+const KEEP = [
+  '/social-media-marketing',
+  '/b2b-social-media-marketing',
+  '/organic-social-media-management',
+  '/meta-ads',
+  '/ppc-marketing',
+  '/google-ads-management',
+  '/first-home-buyer',
+  '/seo-services',
+  '/truck-finance',
+  '/press-release-distribution-services',
+];
+const DROP = [
+  '/about-us',
+  '/contact',
+  '/blog/why-seo-matters',
+  '/our-team',
+  '/calculators-and-financial-tools',
+  '/press-and-media',
+  '/case-studies',
+  '/areas-we-serve',
+  '/privacy-policy',
+  '/multilingual-mortgage-brokers-in-melbourne/punjabi-brokers',
+];
+for (const path of KEEP) {
+  check(`kept as a possible offer: ${path}`, !isNotAService(path));
+}
+for (const path of DROP) {
+  check(`excluded as a page type: ${path}`, isNotAService(path));
+}
 
 const catalogue: DiscoveredService[] = [
   { name: 'First home buyer loans', slug: 'fhb', group: 'Home loans', summary: '', url: null },

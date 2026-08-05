@@ -55,16 +55,56 @@ const READ_CONCURRENCY = 6;
 const PAGE_TIMEOUT_MS = 7_000;
 
 /**
- * Paths that are never an offer.
+ * Words that mark a page as something other than an offer.
  *
- * Substring matching, not segment matching. A real site names a page
- * `/calculators-and-financial-tools`, and a segment-anchored rule lets that
- * through — where it then outranks `/first-home-buyer`, because it happens to
- * contain "financial". Observed on argfinance.com.au: calculators and language
- * pages crowded out every actual loan product.
+ * Matched as WHOLE TOKENS, split on slashes and hyphens — never as substrings.
+ * A substring rule looks equivalent and is not: "media" inside the stoplist
+ * silently deleted /social-media-marketing, /b2b-social-media-marketing and
+ * /organic-social-media-management from a digital agency's catalogue. Three of
+ * its actual services, invisible, with no error anywhere. The strategist simply
+ * never saw them in the picker.
  */
-const NOT_A_SERVICE =
-  /(about|contact|blog|news|article|category|author|privacy|terms|disclaimer|sitemap|cart|checkout|my-account|login|register|search|faq|career|job|our-team|meet-the-team|testimonial|review|gallery|calculator|thank-you|404|areas-we-serve|locations?|lender-panel|partners?|multilingual|health-check|tools|glossary|resources?|guides?|case-stud|webinar|event|award|press|media|refer|sitemap)/i;
+/** Never an offer, whatever else the path says. A blog post about SEO is a blog post. */
+const HARD_STOP = new Set([
+  'about', 'contact', 'blog', 'news', 'article', 'articles', 'category', 'categories',
+  'author', 'privacy', 'terms', 'disclaimer', 'sitemap', 'cart', 'checkout', 'account',
+  'login', 'register', 'search', 'faq', 'faqs', 'career', 'careers', 'job', 'jobs',
+  'team', 'testimonial', 'testimonials', 'thanks', 'thank', '404', 'multilingual',
+  'calculator', 'calculators', 'glossary', 'webinar', 'webinars', 'case', 'study',
+  'studies', 'cookie', 'cookies', 'unsubscribe', 'author',
+]);
+
+/** Usually a page type — but rescued when a service word sits beside it. */
+const SOFT_STOP = new Set([
+  'media', 'press', 'tool', 'tools', 'resource', 'resources', 'guide', 'guides',
+  'event', 'events', 'award', 'awards', 'panel', 'check', 'refer', 'referral',
+  'review', 'reviews', 'gallery', 'portfolio', 'partner', 'partners', 'location',
+  'locations', 'areas',
+]);
+
+/**
+ * Words that mark a page as an offer after all.
+ *
+ * A SOFT stop word sitting next to one of these is part of a service name, not
+ * a page type: "social MEDIA MARKETING" is a service, "press and MEDIA" is not.
+ * The asymmetry is deliberate — a page wrongly kept costs one line in a prompt
+ * the model then rejects, while a page wrongly dropped is a service the
+ * strategist never learns exists.
+ */
+const SERVICE_TOKENS = new Set([
+  'service', 'services', 'marketing', 'seo', 'sem', 'ppc', 'ads', 'adwords', 'advertising',
+  'design', 'development', 'management', 'consulting', 'strategy', 'loan', 'loans',
+  'finance', 'financing', 'lending', 'mortgage', 'insurance', 'treatment', 'treatments',
+  'repair', 'repairs', 'installation', 'cleaning', 'training', 'coaching', 'copywriting',
+  'branding', 'hosting', 'support', 'maintenance', 'solutions', 'automation', 'audit',
+]);
+
+export function isNotAService(path: string): boolean {
+  const tokens = path.toLowerCase().split(/[/\-_.]+/).filter(Boolean);
+  if (tokens.some((t) => HARD_STOP.has(t))) return true;
+  if (!tokens.some((t) => SOFT_STOP.has(t))) return false;
+  return !tokens.some((t) => SERVICE_TOKENS.has(t));
+}
 
 /**
  * Substrings that usually mark an offer. Used to rank, never to exclude —
@@ -186,7 +226,7 @@ function rankCandidates(links: { url: string; text: string }[], rootUrl: string)
 
     const path = url.pathname.replace(/\/$/, '');
     if (!path || path === '/') continue;
-    if (NOT_A_SERVICE.test(path)) continue;
+    if (isNotAService(path)) continue;
 
     const depth = path.split('/').filter(Boolean).length;
     // Very deep paths are almost always articles or archives.
@@ -203,7 +243,7 @@ function rankCandidates(links: { url: string; text: string }[], rootUrl: string)
       score += 2;
       if (link.text.length <= 40) score += 3;
       if (LOOKS_LIKE_SERVICE.test(link.text)) score += 3;
-      if (NOT_A_SERVICE.test(link.text)) score -= 8;
+      if (isNotAService(link.text)) score -= 8;
     }
     // Digits in the last segment usually mean pagination or an ID.
     if (/\d{3,}/.test(path.split('/').pop() ?? '')) score -= 4;
@@ -294,12 +334,21 @@ WHAT DOES NOT
   are one offer sold in two suburbs, not two offers. Collapse them.
 
 RULES
-  - MERGE things that are the same offer worded differently. "Home loans" and "Residential lending" is ONE entry.
-  - MERGE things a customer would buy in a single transaction from a single conversation.
+  - A DEDICATED PAGE IS A DISTINCT OFFER. If the site gave something its own page and its own name, the company
+    sells it as its own thing and it belongs in the list under that name. This rule wins over the merge rules
+    below. Do not fold a named page into a broader category you invented.
+  - MERGE only things that are literally the same offer worded differently. "Home loans" and "Residential
+    lending" pointing at the same page is ONE entry.
   - SPLIT things that plainly serve different buyers. First home buyer loans and commercial property finance are
     NOT the same offer, even though both are lending.
-  - Use the site's own grouping when it has one — "Home loans", "Business & commercial" — as the group field.
-    Use null when the site has no grouping.
+  - SPLIT BY CHANNEL AND BY PLATFORM where the site does. "Meta Ads", "Google Ads", "LinkedIn Ads" and "PPC" are
+    four different offers bought by four different people for four different reasons — never collapse them into
+    one "paid advertising" entry. The same goes for "Shopify SEO" versus "Magento SEO", and for organic social
+    versus paid social.
+  - GROUP EVERY ENTRY. Use the site's own menu headings when it has them — "Home loans", "Business & commercial",
+    "SEO", "Paid advertising" — and invent a sensible heading when it does not. Thirty ungrouped rows is a wall of
+    text nobody can pick from; the same thirty under six headings is a menu. Only use null if the site sells so
+    few things that grouping would be silly.
   - Name each offer as a strategist would say it out loud, in the site's own vocabulary. Title case, no marketing
     adjectives, no trailing "services" unless the site always says it.
   - summary: one short line naming WHO buys this, in plain words — "people buying their first property",
@@ -307,7 +356,11 @@ RULES
     Deserve" tells a strategist nothing about who is on the other end of it. No figures, no prices, no
     invented claims. If the page does not say who it is for, describe the offer plainly instead.
   - Order by how prominent the offer is on the site.
-  - Return AT MOST 20. If the site genuinely sells one thing, set is_single_service true and return that one entry.
+  - COMPLETENESS MATTERS MORE THAN BREVITY. The strategist picks from this list and cannot pick something you
+    left out — a dropped offer is invisible to them, not merely unranked. Do not stop early because the list is
+    getting long, and do not omit an offer because it resembles one you already listed. Return every distinct
+    offer you can see, up to 50. A site with forty service pages sells forty things; say so.
+  - If the site genuinely sells one thing, set is_single_service true and return that one entry.
 
 Return JSON: { "is_single_service": boolean, "services": [ { "name", "group", "summary", "source_url" } ] }
 `.trim();
@@ -377,7 +430,7 @@ async function buildCatalogue(
     model: env.modelFast,
     messages,
     temperature: 0.1,
-    maxTokens: 2200,
+    maxTokens: 4500,
     jsonMode: true,
   });
 
@@ -402,7 +455,7 @@ async function buildCatalogue(
       summary: raw.summary.trim(),
       url: raw.source_url?.trim() || null,
     });
-    if (services.length >= 20) break;
+    if (services.length >= 50) break;
   }
 
   return services;
