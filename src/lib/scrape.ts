@@ -16,7 +16,15 @@ export interface ScrapeResult {
   reason?: string;
 }
 
-const MAX_BYTES = 900_000;
+/**
+ * Byte cap on a fetched page.
+ *
+ * Was 900,000, and trafficradius.com.au's homepage is 899,122 — close enough
+ * that a single extra section on that page would have started truncating the
+ * HTML mid-document, losing the tail of the navigation and with it the offers
+ * only linked from the footer. Modern marketing homepages are large.
+ */
+const MAX_BYTES = 3_000_000;
 const MAX_TEXT_CHARS = 8_000;
 
 /** What we are. Short and truthful — no browser cosplay. */

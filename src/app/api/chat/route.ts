@@ -199,6 +199,14 @@ export async function POST(request: Request) {
               });
             }
           } else {
+            // Logged, not just recorded. A fetch that works from a laptop and
+            // fails from the deployed container is the hardest kind of failure
+            // to reason about from the outside, and the reason is the whole
+            // diagnosis — 403 means a firewall, ENOTFOUND means DNS, a timeout
+            // means the page is too slow or too large from this region.
+            console.error(
+              `[chat] site fetch failed for ${url}: ${scraped.reason ?? 'unknown'}`,
+            );
             // An unreadable site now costs two things, not one: no grounded
             // company facts, and no sub-service check. Record the second
             // explicitly — a strategist who is never offered the scope choice
