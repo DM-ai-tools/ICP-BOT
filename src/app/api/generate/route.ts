@@ -201,6 +201,8 @@ export async function POST(request: Request) {
           runId,
           serviceIndex: job.serviceIndex,
           serviceName: job.service.name,
+          tier: job.service.tier === 'focused' ? 'focused' : 'generic',
+          serviceSlug: job.service.slug ?? null,
           scenario: job.scenario,
           awarenessLabel: awarenessLabel(job.scenario),
           status: 'generating',
@@ -211,6 +213,8 @@ export async function POST(request: Request) {
         update: {
           status: 'generating',
           serviceName: job.service.name,
+          tier: job.service.tier === 'focused' ? 'focused' : 'generic',
+          serviceSlug: job.service.slug ?? null,
           awarenessLabel: awarenessLabel(job.scenario),
           markdown: '',
           validation: undefined,
@@ -230,6 +234,10 @@ export async function POST(request: Request) {
         verifiedContext: siteContext,
         industryContext,
         whyFraming,
+        // A sub-service profile takes the cheaper two-pass route and is told,
+        // by name, which neighbouring offers it must not blend in.
+        plan: job.service.tier === 'focused' ? 'focused' : 'full',
+        siblingServices: services.map((s) => s.name),
         signal,
       };
 

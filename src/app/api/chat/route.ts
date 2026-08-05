@@ -17,6 +17,8 @@ import { converse, detectIntent, type TurnContext, type TurnMode } from '@/lib/c
 import { friendlyError } from '@/lib/openai';
 import { resolveSlots } from '@/lib/resolve';
 import { scrapeSite, verifiedContextBlock } from '@/lib/scrape';
+import { discoverServices } from '@/lib/discover';
+import { MIN_SERVICES_TO_ASK } from '@/lib/discover-types';
 import {
   appendMessage,
   deflectedSlots,
@@ -167,6 +169,35 @@ export async function POST(request: Request) {
             meta = remerged.meta;
             changedSlots = [...new Set([...changedSlots, ...remerged.changed])];
             missing = reresolved.missing;
+
+            // Read the rest of the site while we are here. A broker with
+            // seventeen loan products and a dentist with one are the same shape
+            // of brief until someone looks; this is that look. Everything about
+            // it is best-effort — a failure leaves the run exactly as it was.
+            await prisma.run.update({
+              where: { id: runId },
+              data: { discoveryStatus: 'pending' },
+            });
+
+            const discovered = await discoverServices(url, { runId });
+
+            await prisma.run.update({
+              where: { id: runId },
+              data: {
+                discoveryStatus: discovered.status,
+                discoveredServices: discovered.services as unknown as object,
+                discoveryPagesRead: discovered.pagesRead,
+              },
+            });
+
+            if (discovered.status === 'ok' && discovered.services.length >= MIN_SERVICES_TO_ASK) {
+              writer.send({
+                type: 'discovery',
+                status: discovered.status,
+                services: discovered.services,
+                pagesRead: discovered.pagesRead,
+              });
+            }
           } else {
             await prisma.run.update({
               where: { id: runId },

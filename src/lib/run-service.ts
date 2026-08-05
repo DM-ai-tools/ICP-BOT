@@ -29,6 +29,13 @@ import type {
 } from './types';
 import type { ComparisonRow } from './compare';
 import type { SectionReport } from './sections';
+import {
+  MIN_SERVICES_TO_ASK,
+  discoveredServiceSchema,
+  type DiscoveredService,
+  type DiscoveryStatus,
+  type ScopeChoice,
+} from './discover-types';
 
 type RunRecord = Awaited<ReturnType<typeof prisma.run.findUnique>>;
 
@@ -90,6 +97,8 @@ export function serialiseDocument(doc: LoadedRun['documents'][number]): Document
     id: doc.id,
     serviceIndex: doc.serviceIndex,
     serviceName: doc.serviceName,
+    tier: doc.tier === 'focused' ? 'focused' : 'generic',
+    serviceSlug: doc.serviceSlug ?? null,
     scenario: doc.scenario as AwarenessKey,
     awarenessLabel: doc.awarenessLabel,
     status: doc.status as DocumentStatus,
@@ -118,10 +127,33 @@ export function serialiseComparison(row: LoadedRun['comparisons'][number]): Comp
   };
 }
 
+/** Discovered sub-services, tolerant of anything already in the column. */
+export function discoveredServicesOf(run: { discoveredServices: unknown }): DiscoveredService[] {
+  if (!Array.isArray(run.discoveredServices)) return [];
+  const out: DiscoveredService[] = [];
+  for (const raw of run.discoveredServices) {
+    const parsed = discoveredServiceSchema.safeParse(raw);
+    if (parsed.success) out.push(parsed.data);
+  }
+  return out;
+}
+
 export function serialiseRun(run: LoadedRun): RunState {
   const slots = slotsOf(run);
   const meta = metaOf(run);
   const readiness = computeReadiness(slots, meta, { askedAndDeflected: deflectedSlots(run) });
+
+  const discoveredServices = discoveredServicesOf(run);
+  const discoveryStatus = (run.discoveryStatus as DiscoveryStatus | null) ?? 'idle';
+
+  // The gate. Only interrupt when there is a real choice to make: the brief is
+  // otherwise ready to go, the site sells several distinct things, and nobody
+  // has answered yet. A one-offer site never sees this.
+  const needsScopeChoice =
+    !run.scopeResolved &&
+    discoveryStatus === 'ok' &&
+    discoveredServices.length >= MIN_SERVICES_TO_ASK &&
+    readiness.briefComplete;
 
   return {
     id: run.id,
@@ -143,6 +175,14 @@ export function serialiseRun(run: LoadedRun): RunState {
     industryPack: run.industryPack ? toSummary(run.industryPack) : null,
     siteFetchStatus: run.siteFetchStatus,
     siteFetchedUrl: run.siteFetchedUrl,
+    discovery: {
+      status: discoveryStatus,
+      services: discoveredServices,
+      pagesRead: run.discoveryPagesRead ?? 0,
+      scopeChoice: (run.scopeChoice as ScopeChoice | null) ?? null,
+      scopeResolved: run.scopeResolved,
+      needsScopeChoice,
+    },
     masterPromptVersion: run.masterPromptVersion,
     awarenessModalAnswered: run.awarenessModalAnswered,
     awarenessResolvedInChat: run.awarenessResolvedInChat,

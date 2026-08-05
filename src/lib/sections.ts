@@ -329,6 +329,41 @@ export const SECTIONS_BY_PASS = {
   C: SECTIONS.filter((s) => s.pass === 'C'),
 } as const;
 
+/**
+ * How a document is split into calls.
+ *
+ *   full    — three passes. Every section gets room to breathe. This is the
+ *             whole-business profile, unchanged.
+ *   focused — two passes over the same 19 sections. A sub-service profile is
+ *             written against a brief the strategist has already validated and
+ *             an industry pack already retrieved, so the third seam buys less
+ *             than it costs. Input tokens dominate the bill and they are paid
+ *             again on every call, so removing one call takes about a third off
+ *             the document.
+ *
+ * The split point is not arbitrary. The avatar has to be established in the
+ * first call, and Objections and the Qualification Checklist have to close the
+ * document, so the seam must fall between them.
+ */
+export type PassPlan = 'full' | 'focused';
+
+const FOCUSED_SPLIT = 10;
+
+const FOCUSED_PASSES = {
+  A: SECTIONS.slice(0, FOCUSED_SPLIT),
+  B: SECTIONS.slice(FOCUSED_SPLIT),
+} as const;
+
+/** Pass ids a plan uses, in order. */
+export function passesFor(plan: PassPlan): SectionSpec['pass'][] {
+  return plan === 'focused' ? ['A', 'B'] : ['A', 'B', 'C'];
+}
+
+export function sectionsForPass(plan: PassPlan, pass: SectionSpec['pass']): readonly SectionSpec[] {
+  if (plan === 'full') return SECTIONS_BY_PASS[pass];
+  return pass === 'A' ? FOCUSED_PASSES.A : FOCUSED_PASSES.B;
+}
+
 export function sectionByKey(key: SectionKey): SectionSpec {
   const found = SECTIONS.find((s) => s.key === key);
   if (!found) throw new Error(`Unknown section key: ${key}`);

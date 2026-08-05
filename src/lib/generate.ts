@@ -14,7 +14,13 @@ import 'server-only';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { env } from './env';
 import { streamComplete } from './openai';
-import { masterPrompt, SECTIONS_BY_PASS, type SectionSpec } from './master-prompt';
+import {
+  masterPrompt,
+  passesFor,
+  sectionsForPass,
+  type PassPlan,
+  type SectionSpec,
+} from './master-prompt';
 import { awarenessLabel } from './awareness';
 import {
   AUDIENCE_TYPE_LABEL,
@@ -42,6 +48,14 @@ export interface GenerationContext {
   industryContext?: string | null;
   /** One line assembled from the conversation. */
   whyFraming: string;
+  /**
+   * 'focused' when this document profiles one sub-service of a business that
+   * sells several. Two passes instead of three, and a guardrail that stops the
+   * avatar drifting into a neighbouring service's buyer.
+   */
+  plan?: PassPlan;
+  /** The other offers on the same site, for the sub-service guardrail. */
+  siblingServices?: string[];
   signal?: AbortSignal;
 }
 
@@ -133,6 +147,48 @@ function roleGuardrail(slots: SlotValues): string | null {
   ].join(' ');
 }
 
+/**
+ * Keeps a sub-service profile about ITS buyer.
+ *
+ * The whole reason for splitting a multi-service site is that the buyers are
+ * different people. A first home buyer and a truck-finance customer share a
+ * broker and nothing else. Without this, the model reaches for the business's
+ * overall positioning and writes a blended person who buys everything — which
+ * is precisely the averaging failure the split exists to prevent.
+ *
+ * The sibling list is named explicitly because "do not blend" is weak without
+ * saying what must not be blended in.
+ */
+function subServiceGuardrail(ctx: GenerationContext): string | null {
+  if (ctx.plan !== 'focused') return null;
+
+  const siblings = (ctx.siblingServices ?? []).filter(
+    (name) => name.trim() && name.trim().toLowerCase() !== ctx.service.name.trim().toLowerCase(),
+  );
+
+  const lines = [
+    `SUB-SERVICE — this document profiles the buyer of ONE offer: ${ctx.service.name}.`,
+    'The company sells several offers to several different kinds of buyer. This document is about the person',
+    `who comes to them specifically for ${ctx.service.name}, at the awareness stage named above.`,
+  ];
+
+  if (siblings.length) {
+    lines.push(
+      `The company's other offers are: ${siblings.join('; ')}. Those have their own buyers and their own`,
+      'documents. Do NOT describe a person who is weighing up several of these at once, do not widen the avatar',
+      'to cover the whole business, and do not let another offer supply the goals, pains, triggers or objections',
+      'here. If the same person genuinely would buy two of these, say so in one clause and move on.',
+    );
+  }
+
+  lines.push(
+    'Everything else — depth, structure, section count, numbered points — is exactly as it would be for any',
+    'other profile. This is a narrower subject, not a shorter document.',
+  );
+
+  return lines.join(' ');
+}
+
 function audienceGuardrail(slots: SlotValues): string {
   const audience = slots.audience_type ?? 'direct_buyer';
   const label = AUDIENCE_TYPE_LABEL[audience];
@@ -199,15 +255,20 @@ the qualification checklist — keep exactly the structure the framework specifi
 `.trim();
 
 function passTask(pass: PassId, ctx: GenerationContext): string {
-  const sections = SECTIONS_BY_PASS[pass];
+  const plan = ctx.plan ?? 'full';
+  const passes = passesFor(plan);
+  const total = passes.length;
+  const position = passes.indexOf(pass) + 1;
+  const isFirst = position === 1;
+  const isLast = position === total;
+
+  const sections = sectionsForPass(plan, pass);
   const list = sections.map((s, i) => sectionInstruction(s, i + 1)).join('\n');
 
-  const passName = { A: 'PART 1 OF 3', B: 'PART 2 OF 3', C: 'PART 3 OF 3' }[pass];
-
   const header = [
-    `TASK — ${passName}`,
+    `TASK — PART ${position} OF ${total}`,
     '',
-    'This ICP is being written in three parts so every section gets full depth. Produce ONLY the sections',
+    `This ICP is being written in ${total === 2 ? 'two' : 'three'} parts so every section gets full depth. Produce ONLY the sections`,
     'listed below, in this exact order, using these exact headings and markdown levels. Do not add a preamble,',
     'do not add a closing summary, do not restate sections from another part, and do not announce which part',
     'this is. Begin directly with the first heading.',
@@ -215,26 +276,25 @@ function passTask(pass: PassId, ctx: GenerationContext): string {
     list,
   ];
 
-  if (pass === 'A') {
+  if (isFirst) {
     header.push(
       '',
       'The Title Line is a level-1 heading containing the full pipe-separated line from the master prompt format.',
       'Avatar Name and the jargon line are one line each, under their own level-2 headings.',
       'The avatar you name here is the person for the entire document — later parts will build on it.',
     );
-  }
-  if (pass === 'B') {
+  } else {
     header.push(
       '',
       'Stay in the same avatar, voice, region and jargon set established in Part 1. Do not re-introduce the',
-      'avatar or restate their identity — go straight into their goals.',
+      'avatar or restate their identity — continue straight into the sections listed.',
     );
   }
-  if (pass === 'C') {
+  if (isLast && !isFirst) {
     header.push(
       '',
-      'Stay in the same avatar, voice, region and jargon set. This part closes the document — Objections must',
-      'be exactly 8, and the Qualification Checklist must be the final section.',
+      'This part closes the document — Objections must be exactly 8, and the Qualification Checklist must be',
+      'the final section.',
     );
   }
 
@@ -280,6 +340,9 @@ export function buildUserMessage(
 
   const roleRule = roleGuardrail(ctx.slots);
   if (roleRule) blocks.push(roleRule);
+
+  const subService = subServiceGuardrail(ctx);
+  if (subService) blocks.push(subService);
 
   const compliance = complianceGuardrail(ctx.slots);
   if (compliance) blocks.push(compliance);
@@ -344,29 +407,45 @@ export async function generatePass(
 }
 
 /**
- * Runs all three passes and returns the assembled markdown.
- * Deltas are forwarded as they arrive so the UI streams a document being
- * written, not three documents appearing.
+ * Runs the plan's passes and returns the assembled markdown.
+ *
+ * Three for a whole-business profile, two for a sub-service. Deltas are
+ * forwarded as they arrive so the UI streams a document being written, not
+ * several documents appearing.
  */
 export async function generateDocument(
   ctx: GenerationContext,
   onDelta: (chunk: string, pass: PassId) => void | Promise<void>,
 ): Promise<{ markdown: string; promptTokens: number; completionTokens: number; costUsd: number }> {
-  const a = await generatePass('A', ctx, {}, (chunk) => onDelta(chunk, 'A'));
+  const passes = passesFor(ctx.plan ?? 'full') as PassId[];
+  const parts: string[] = [];
+  const written: { a?: string; b?: string } = {};
 
-  const separatorAfterA = '\n\n';
-  await onDelta(separatorAfterA, 'A');
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let costUsd = 0;
 
-  const b = await generatePass('B', ctx, { a: a.text }, (chunk) => onDelta(chunk, 'B'));
-  await onDelta(separatorAfterA, 'B');
+  for (const [index, pass] of passes.entries()) {
+    if (index > 0) await onDelta('\n\n', passes[index - 1]);
 
-  const c = await generatePass('C', ctx, { a: a.text, b: b.text }, (chunk) => onDelta(chunk, 'C'));
+    const result = await generatePass(pass, ctx, { ...written }, (chunk) => onDelta(chunk, pass));
+
+    parts.push(result.text);
+    promptTokens += result.promptTokens;
+    completionTokens += result.completionTokens;
+    costUsd += result.costUsd;
+
+    // Earlier parts are carried forward verbatim so the avatar name, voice,
+    // region and jargon stay identical across the seams.
+    if (index === 0) written.a = result.text;
+    else if (index === 1) written.b = result.text;
+  }
 
   return {
-    markdown: [a.text, b.text, c.text].join('\n\n'),
-    promptTokens: a.promptTokens + b.promptTokens + c.promptTokens,
-    completionTokens: a.completionTokens + b.completionTokens + c.completionTokens,
-    costUsd: a.costUsd + b.costUsd + c.costUsd,
+    markdown: parts.join('\n\n'),
+    promptTokens,
+    completionTokens,
+    costUsd,
   };
 }
 

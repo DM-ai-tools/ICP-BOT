@@ -260,39 +260,43 @@ export function parseZipSelection(param: string | null): ZipSelection | null {
   return selection.size ? selection : null;
 }
 
-export async function exportZip(
+type Wants = (doc: ExportDoc, format: ExportFormat) => boolean;
+
+/**
+ * One service's worth of files, written into whichever folder it belongs to.
+ *
+ * Used for the root of a single-offer pack and for each sub-folder of a
+ * multi-offer one, so the two layouts cannot drift apart — a strategist who
+ * learns where the PDFs live in one pack knows where they live in the other.
+ */
+async function writeServiceFolder(
+  folder: JSZip,
   run: ExportRun,
-  serviceIndex?: number,
-  selection?: ZipSelection | null,
-): Promise<{ buffer: Buffer; filename: string }> {
+  serviceIndex: number,
+  docs: ExportDoc[],
+  wants: Wants,
+): Promise<{ formats: ExportFormat[] }> {
   const slots = slotsOf(run);
-  const all = exportableDocuments(run, serviceIndex);
-  if (!all.length) throw new Error('There are no generated documents to export yet.');
 
-  // A selection narrows both which scenarios appear and which formats each one
-  // gets. No selection means everything, which is the default the UI ships with.
-  const wants = (doc: ExportDoc, format: ExportFormat) =>
-    !selection || (selection.get(doc.id)?.has(format) ?? false);
-
-  const docs = selection ? all.filter((doc) => selection.has(doc.id)) : all;
-  if (!docs.length) throw new Error('Nothing was selected to download.');
-
-  const zip = new JSZip();
-
-  // The map goes at the root — it is the file people open first.
   try {
-    const map = await exportAwarenessMapDocx(run, serviceIndex ?? docs[0].serviceIndex);
-    zip.file(map.filename, map.buffer);
+    const map = await exportAwarenessMapDocx(run, serviceIndex);
+    folder.file(map.filename, map.buffer);
   } catch {
     // A failed map must not cost the individual files.
   }
 
   const needs = (format: ExportFormat) => docs.some((doc) => wants(doc, format));
+  const used: ExportFormat[] = [];
 
-  const pdfFolder = needs('pdf') ? zip.folder('scenarios-pdf') : null;
-  const excelFolder = needs('xlsx') ? zip.folder('scenarios-excel') : null;
-  const docxFolder = needs('docx') ? zip.folder('scenarios-docx') : null;
-  const mdFolder = needs('md') ? zip.folder('scenarios-markdown') : null;
+  const pdfFolder = needs('pdf') ? folder.folder('scenarios-pdf') : null;
+  const excelFolder = needs('xlsx') ? folder.folder('scenarios-excel') : null;
+  const docxFolder = needs('docx') ? folder.folder('scenarios-docx') : null;
+  const mdFolder = needs('md') ? folder.folder('scenarios-markdown') : null;
+
+  if (pdfFolder) used.push('pdf');
+  if (excelFolder) used.push('xlsx');
+  if (docxFolder) used.push('docx');
+  if (mdFolder) used.push('md');
 
   for (const doc of docs) {
     if (wants(doc, 'pdf')) {
@@ -313,15 +317,72 @@ export async function exportZip(
     }
   }
 
-  const comparison = run.comparisons.find(
-    (c) => c.serviceIndex === (serviceIndex ?? docs[0].serviceIndex),
-  );
+  const comparison = run.comparisons.find((c) => c.serviceIndex === serviceIndex);
   if (comparison) {
     const rows = (comparison.rows as unknown as ComparisonRow[]) ?? [];
-    zip.file(
+    folder.file(
       `${slugify(slots.company_name || 'icp')}-comparison-${dateStamp()}.md`,
       comparison.markdown || comparisonToMarkdown(rows, comparison.serviceName),
     );
+  }
+
+  return { formats: used };
+}
+
+/** Folder name for a service: numbered so the tree reads in build order. */
+function serviceFolderName(doc: ExportDoc, position: number): string {
+  const slug = doc.serviceSlug?.trim() || slugify(doc.serviceName || `service-${position}`);
+  return `${String(position).padStart(2, '0')}-${slug}`;
+}
+
+export async function exportZip(
+  run: ExportRun,
+  serviceIndex?: number,
+  selection?: ZipSelection | null,
+): Promise<{ buffer: Buffer; filename: string }> {
+  const slots = slotsOf(run);
+  const all = exportableDocuments(run, serviceIndex);
+  if (!all.length) throw new Error('There are no generated documents to export yet.');
+
+  // A selection narrows both which scenarios appear and which formats each one
+  // gets. No selection means everything, which is the default the UI ships with.
+  const wants: Wants = (doc, format) =>
+    !selection || (selection.get(doc.id)?.has(format) ?? false);
+
+  const docs = selection ? all.filter((doc) => selection.has(doc.id)) : all;
+  if (!docs.length) throw new Error('Nothing was selected to download.');
+
+  const zip = new JSZip();
+  const stamp = dateStamp();
+  const company = slugify(slots.company_name || 'icp');
+
+  // Group by service, preserving generate order: the whole-business profile
+  // first, then each sub-service.
+  const byService = new Map<number, ExportDoc[]>();
+  for (const doc of docs) {
+    if (!byService.has(doc.serviceIndex)) byService.set(doc.serviceIndex, []);
+    byService.get(doc.serviceIndex)!.push(doc);
+  }
+  const groups = [...byService.entries()].sort((a, b) => a[0] - b[0]);
+
+  // One offer stays flat. Nesting a four-file deliverable inside two folders
+  // makes it harder to use, not more organised.
+  const nested = groups.length > 1;
+
+  if (!nested) {
+    await writeServiceFolder(zip, run, groups[0][0], groups[0][1], wants);
+  } else {
+    for (const [position, [index, group]] of groups.entries()) {
+      const first = group[0];
+      const name =
+        first.tier === 'focused'
+          ? `${String(position + 1).padStart(2, '0')}-${first.serviceSlug?.trim() || slugify(first.serviceName)}`
+          : serviceFolderName(first, position + 1);
+      const folder = zip.folder(name);
+      if (folder) await writeServiceFolder(folder, run, index, group, wants);
+    }
+
+    zip.file('ARCHITECTURE.md', architectureMap(run, slots, groups, wants));
   }
 
   zip.file(
@@ -331,17 +392,36 @@ export async function exportZip(
       `Generated ${new Date().toISOString().slice(0, 10)}`,
       `Master prompt version: ${run.masterPromptVersion}`,
       '',
-      'Contents',
+      ...(nested
+        ? [
+            'This pack covers several offers. Each has its own folder, numbered in',
+            'the order it was built. Open ARCHITECTURE.md first — it explains how',
+            'the profiles relate to each other and how the pack was assembled.',
+            '',
+            'Folders',
+            ...groups.map(([, group], position) => {
+              const first = group[0];
+              const name =
+                first.tier === 'focused'
+                  ? `${String(position + 1).padStart(2, '0')}-${first.serviceSlug?.trim() || slugify(first.serviceName)}`
+                  : serviceFolderName(first, position + 1);
+              const kind = first.tier === 'focused' ? 'sub-service' : 'whole business';
+              return `  ${name}/`.padEnd(34) + `${first.serviceName} (${kind})`;
+            }),
+            '',
+            'Inside each folder',
+          ]
+        : ['Contents']),
       '  awareness-map.docx      Cover, comparison table and every scenario as a chapter with a table of contents.',
-      ...(docxFolder ? ['  scenarios-docx/         Each awareness stage as a standalone Word file.'] : []),
-      ...(pdfFolder ? ['  scenarios-pdf/          Each awareness stage as a PDF, for reading and sending.'] : []),
-      ...(excelFolder ? ['  scenarios-excel/        The same content as a spreadsheet: field name in column A, content in column B.'] : []),
-      ...(mdFolder ? ['  scenarios-markdown/     The same content as raw markdown.'] : []),
+      '  scenarios-pdf/          Each awareness stage as a PDF, for reading and sending.',
+      '  scenarios-excel/        The same content as a spreadsheet: field name in column A, content in column B.',
+      '  *-comparison-*.md       How the four stages differ, side by side.',
       '',
-      'Scenarios included:',
+      'Documents included:',
       ...docs.map((doc) => {
         const formats = SELECTABLE_FORMATS.filter((f) => wants(doc, f));
-        return `  - ${awarenessLabel(doc.scenario as AwarenessKey)} (${doc.badge ?? 'unknown'}) — ${formats.join(', ')}`;
+        const prefix = nested ? `${doc.serviceName} — ` : '';
+        return `  - ${prefix}${awarenessLabel(doc.scenario as AwarenessKey)} (${doc.badge ?? 'unknown'}) — ${formats.join(', ')}`;
       }),
       '',
       'Word headings use real Heading 1/2/3 styles, so you can apply your own',
@@ -352,8 +432,109 @@ export async function exportZip(
   const buffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   return {
     buffer,
-    filename: `${slugify(slots.company_name || 'icp')}-icp-pack-${dateStamp()}.zip`,
+    filename: `${company}-icp-pack-${stamp}.zip`,
   };
+}
+
+/**
+ * The architecture map.
+ *
+ * A multi-offer pack is a structure, not a pile of files, and the structure
+ * carries the argument: this is the business, these are its buyers, here is why
+ * they were split this way. Someone opening the zip in six months — or a client
+ * receiving it cold — needs that on one page before they open anything else.
+ */
+function architectureMap(
+  run: ExportRun,
+  slots: SlotValues,
+  groups: [number, ExportDoc[]][],
+  wants: Wants,
+): string {
+  const company = slots.company_name ?? 'This business';
+  const generic = groups.filter(([, group]) => group[0].tier !== 'focused');
+  const focused = groups.filter(([, group]) => group[0].tier === 'focused');
+
+  const lines: string[] = [
+    `# ${company} — how this pack is built`,
+    '',
+    `Generated ${new Date().toISOString().slice(0, 10)} · master prompt \`${run.masterPromptVersion}\``,
+    '',
+    '## What is here',
+    '',
+  ];
+
+  if (generic.length && focused.length) {
+    lines.push(
+      `${company} sells several distinct things, so this pack has two levels. The whole-business profile is the`,
+      'parent: it describes the buyer as the business presents itself to the market. Under it sits one profile',
+      `set per sub-service, because those offers attract genuinely different people — and a single profile`,
+      'averaging them would describe nobody.',
+      '',
+      'Read the whole-business set for positioning and brand-level messaging. Read a sub-service set when you are',
+      'briefing a campaign, a landing page or a sales conversation for that specific offer.',
+    );
+  } else if (focused.length) {
+    lines.push(
+      `This pack covers ${focused.length} specific offer${focused.length === 1 ? '' : 's'} from ${company}, each with its own`,
+      'buyer profile. There is no whole-business profile in this pack — it was not requested. Each set stands on',
+      'its own and is briefed against that offer alone.',
+    );
+  } else {
+    lines.push(`One profile set for ${company} as a whole.`);
+  }
+
+  lines.push('', '## The tree', '', '```');
+
+  for (const [position, [, group]] of groups.entries()) {
+    const first = group[0];
+    const name =
+      first.tier === 'focused'
+        ? `${String(position + 1).padStart(2, '0')}-${first.serviceSlug?.trim() || slugify(first.serviceName)}`
+        : serviceFolderName(first, position + 1);
+    const kind = first.tier === 'focused' ? 'sub-service' : 'whole business';
+
+    lines.push(`${name}/${' '.repeat(Math.max(1, 30 - name.length))}${first.serviceName} — ${kind}`);
+    for (const doc of [...group].sort(
+      (a, b) => scenarioRank(a.scenario as AwarenessKey) - scenarioRank(b.scenario as AwarenessKey),
+    )) {
+      const formats = SELECTABLE_FORMATS.filter((f) => wants(doc, f));
+      lines.push(`  ├─ ${awarenessShort(doc.scenario as AwarenessKey).padEnd(16)}${formats.join(', ')}`);
+    }
+    lines.push('  └─ comparison — how those four stages differ');
+  }
+
+  lines.push('```', '', '## How each profile was produced', '');
+
+  lines.push(
+    '1. **Brief.** The conversation was resolved into a structured brief — industry, region, business model,',
+    '   offers, pricing terms, company type and maturity — with each value marked as stated, inferred or',
+    '   defaulted. Nothing was assumed silently.',
+    '2. **Site read.** The website was fetched and used as verified context, so company facts are grounded',
+    '   rather than invented. Its navigation and sitemap were followed to list the offers above.',
+    '3. **Industry retrieval.** Domain intelligence for this vertical was retrieved from a persistent store and',
+    '   added to the prompt before any document was written — vocabulary, roles, buying triggers, objections,',
+    '   regulators. It carries no figures by design.',
+    '4. **Generation.** Each document was written across sequential passes rather than one call, so every one of',
+    '   the nineteen sections gets a full budget. The whole-business profile uses three passes; sub-service',
+    '   profiles use two, against a brief already validated at the parent level.',
+    '5. **Validation.** Every section was checked for presence, structure and depth. Anything failing was',
+    '   repaired in a targeted second call and badged, so you can see which sections needed it.',
+    '',
+    '## Rules that were enforced',
+    '',
+    '- No price, rate or statistic appears anywhere unless it was supplied in the brief.',
+    '- Each document is written at exactly one awareness stage and must read differently from its siblings.',
+    '- A sub-service profile describes the buyer of that offer only, and may not blend in a neighbouring one.',
+    '- The master prompt is immutable and versioned; the version above produced every file in this pack.',
+  );
+
+  if (slots.region) {
+    lines.push(`- Spelling, vocabulary and regulator references are those of ${slots.region}.`);
+  }
+
+  lines.push('', '---', '', 'Reference material for briefing. Validate against your own client data before betting a budget on it.');
+
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------

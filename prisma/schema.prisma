@@ -4,6 +4,15 @@
 
 generator client {
   provider = "prisma-client-js"
+
+  // Railway builds on Debian and runs on Debian, but the build layer and the
+  // runtime layer are not guaranteed to be the same image — and when they are
+  // not, a client generated for "native" only fails at boot with
+  //   "Query engine binary for current platform ... could not be found"
+  // which reads like a code fault and is not one. Naming the Linux targets
+  // explicitly makes the deployed client correct regardless of which layer
+  // generated it. "native" keeps local Windows and macOS development working.
+  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
 }
 
 datasource db {
@@ -41,6 +50,19 @@ model Run {
   siteFetchStatus String? // pending | ok | failed | skipped
   siteFetchedUrl  String?
   siteNoticeShown Boolean @default(false)
+
+  /// Sub-service discovery, run once off the same URL as the site fetch.
+  /// idle | pending | ok | single | failed. 'single' means a real site that
+  /// sells one thing — those strategists are never interrupted.
+  discoveryStatus    String? @default("idle")
+  discoveredServices Json    @default("[]") // DiscoveredService[]
+  discoveryPagesRead Int     @default(0)
+
+  /// What the strategist chose once discovery found several offers:
+  /// generic | focused | both. scopeResolved gates the picker, so a strategist
+  /// who dismisses it is not asked again on the next turn.
+  scopeChoice   String?
+  scopeResolved Boolean @default(false)
 
   /// Regulated vertical (health|dental|medical|finance|legal) — appends the
   /// compliance-language reminder and flags the run in the UI.
@@ -104,6 +126,14 @@ model Document {
 
   serviceIndex Int
   serviceName  String
+
+  /// generic — the whole-business profile; focused — one sub-service.
+  /// Denormalised from the slot it was generated for so the export can build
+  /// its folder tree without rehydrating every snapshot.
+  tier        String  @default("generic")
+  /// Stable key for a focused document's sub-service. Positional indexes drift
+  /// when a catalogue is re-ordered; a slug lands in the same folder every time.
+  serviceSlug String?
 
   /// Internal scenario key, e.g. "problem_aware".
   scenario       String

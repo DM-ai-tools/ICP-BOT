@@ -23,9 +23,22 @@ export type AwarenessKey =
 
 export type SlotSource = 'stated' | 'inferred' | 'default';
 
+/**
+ * generic — the whole business as it presents itself. This is what a run
+ *           produces when the site sells one thing, and it is unchanged from
+ *           the original single-offer behaviour.
+ * focused — one sub-service picked off a discovered catalogue. Same document
+ *           shape, generated on the cheaper path (see generate.ts).
+ */
+export type ServiceTier = 'generic' | 'focused';
+
 export interface ServiceSlot {
   name: string;
   price_terms?: string | null;
+  /** Absent means generic — every brief written before scoping existed. */
+  tier?: ServiceTier | null;
+  /** Stable key for focused services; carried into filenames and folders. */
+  slug?: string | null;
 }
 
 export interface SlotValues {
@@ -63,13 +76,26 @@ export type SlotMeta = Partial<Record<SlotKey, SlotMetaEntry>>;
 // Zod schema — used to validate the resolver's JSON output
 // ---------------------------------------------------------------------------
 
-export const SERVICE_CAP = 3;
+/**
+ * How many offers one run will generate for.
+ *
+ * The conversation still resolves at most three from prose — a strategist
+ * describing a business in a sentence is not naming ten offers, and a resolver
+ * that returns ten from one sentence is hallucinating. The higher ceiling
+ * exists for the scope picker, where every entry was read off the client's own
+ * website and ticked by a human.
+ */
+export const SERVICE_CAP = 13;
+/** What the resolver alone may infer from prose, without a picker. */
+export const CONVERSATIONAL_SERVICE_CAP = 3;
 
 const nullableString = z.union([z.string(), z.null()]).optional();
 
 export const serviceSchema = z.object({
   name: z.string().min(1),
   price_terms: nullableString,
+  tier: z.union([z.enum(['generic', 'focused']), z.null()]).optional(),
+  slug: nullableString,
 });
 
 export const slotValuesSchema = z.object({
@@ -247,7 +273,7 @@ export function isEmptySlot(key: SlotKey, value: unknown): boolean {
   return false;
 }
 
-export function normaliseServices(input: unknown): ServiceSlot[] {
+export function normaliseServices(input: unknown, cap = SERVICE_CAP): ServiceSlot[] {
   if (!Array.isArray(input)) return [];
   const seen = new Set<string>();
   const out: ServiceSlot[] = [];
@@ -259,11 +285,21 @@ export function normaliseServices(input: unknown): ServiceSlot[] {
     seen.add(dedupeKey);
     const price =
       typeof raw?.price_terms === 'string' && raw.price_terms.trim() ? raw.price_terms.trim() : null;
-    out.push({ name, price_terms: price });
-    // Hard cap: the master prompt's structure assumes a focused offer set.
-    if (out.length >= SERVICE_CAP) break;
+    const tier: ServiceTier | null = raw?.tier === 'focused' ? 'focused' : raw?.tier === 'generic' ? 'generic' : null;
+    const slug = typeof raw?.slug === 'string' && raw.slug.trim() ? raw.slug.trim() : null;
+    out.push({ name, price_terms: price, tier, slug });
+    if (out.length >= cap) break;
   }
   return out;
+}
+
+/** A tiered list came from the scope picker, not from prose. */
+function isTieredList(input: unknown): boolean {
+  return Array.isArray(input) && input.some((entry) => entry?.tier === 'generic' || entry?.tier === 'focused');
+}
+
+export function isFocused(service: ServiceSlot | undefined | null): boolean {
+  return service?.tier === 'focused';
 }
 
 const SOURCE_RANK: Record<SlotSource, number> = { default: 0, inferred: 1, stated: 2 };
@@ -300,7 +336,13 @@ export function mergeResolution(
     const nextRaw = (incoming as Record<string, unknown>)[key];
     if (nextRaw === undefined) continue;
 
-    const next = key === 'services' ? normaliseServices(nextRaw) : nextRaw;
+    // A tiered list was ticked by a human off their own website, so it earns
+    // the full ceiling. An untiered one came out of prose, where ten offers
+    // from one sentence means the resolver is inventing.
+    const next =
+      key === 'services'
+        ? normaliseServices(nextRaw, isTieredList(nextRaw) ? SERVICE_CAP : CONVERSATIONAL_SERVICE_CAP)
+        : nextRaw;
     if (isEmptySlot(key, next)) continue;
 
     const nextMeta: SlotMetaEntry = incomingMeta[key] ?? { source: 'inferred', confidence: 0.5 };

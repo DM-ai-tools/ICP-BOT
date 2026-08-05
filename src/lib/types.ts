@@ -7,6 +7,7 @@ import type { AwarenessKey, SlotKey, SlotMeta, SlotValues } from './slots';
 import type { SectionReport } from './sections';
 import type { ComparisonRow } from './comparison';
 import type { IndustryPackSummary } from './industry-types';
+import type { DiscoveredService, DiscoveryStatus, ScopeChoice } from './discover-types';
 
 export type DocumentStatus =
   | 'pending'
@@ -20,6 +21,9 @@ export interface DocumentSummary {
   id: string;
   serviceIndex: number;
   serviceName: string;
+  /** generic — whole business; focused — one sub-service. */
+  tier: 'generic' | 'focused';
+  serviceSlug: string | null;
   scenario: AwarenessKey;
   awarenessLabel: string;
   status: DocumentStatus;
@@ -70,6 +74,19 @@ export interface RunState {
   industryPack: IndustryPackSummary | null;
   siteFetchStatus: string | null;
   siteFetchedUrl: string | null;
+  /**
+   * Sub-service discovery. `needsScopeChoice` is the gate: the brief is
+   * otherwise ready, the site turned out to sell several distinct things, and
+   * nobody has said yet whether they want one profile or several.
+   */
+  discovery: {
+    status: DiscoveryStatus;
+    services: DiscoveredService[];
+    pagesRead: number;
+    scopeChoice: ScopeChoice | null;
+    scopeResolved: boolean;
+    needsScopeChoice: boolean;
+  };
   masterPromptVersion: string;
   awarenessModalAnswered: boolean;
   awarenessResolvedInChat: boolean;
@@ -104,6 +121,12 @@ export type ChatEvent =
   | { type: 'message_start'; messageId: string }
   | { type: 'message_end'; messageId: string; content: string }
   | { type: 'state'; state: RunState }
+  | {
+      type: 'discovery';
+      status: DiscoveryStatus;
+      services: DiscoveredService[];
+      pagesRead: number;
+    }
   | { type: 'notice'; text: string }
   | { type: 'error'; text: string }
   | { type: 'done' };

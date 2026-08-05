@@ -34,6 +34,8 @@ import { IndustryPanel } from '@/components/industry-panel';
 import { ChatPanel, type ThreadMessage } from '@/components/chat-panel';
 import { CommandPalette, useCommandPalette, type Command } from '@/components/command-palette';
 import { ResultsView, type LiveDoc } from '@/components/results-view';
+import { ScopePicker } from '@/components/scope-picker';
+import type { ScopeChoice } from '@/lib/discover-types';
 import { ThemeToggle, useTheme } from '@/components/theme-provider';
 import { Button, Divider, Hint, Kbd, ProgressTrack, Segmented, Spinner } from '@/components/ui/primitives';
 import {
@@ -95,11 +97,55 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
     if (chatBusy || generating || autoStarted.current) return;
     if (!state.readiness.briefComplete) return;
     if (state.documents.length > 0) return;
+    // A multi-offer site has one question left that only a human can answer:
+    // whose profile is this for? Starting before that is answered burns money
+    // on the wrong deliverable.
+    if (state.discovery.needsScopeChoice) return;
 
     autoStarted.current = true;
     void startGeneration(DEFAULT_SCENARIOS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.readiness.briefComplete, state.documents.length, chatBusy, generating]);
+  }, [
+    state.readiness.briefComplete,
+    state.documents.length,
+    state.discovery.needsScopeChoice,
+    chatBusy,
+    generating,
+  ]);
+
+  // ---- scope -------------------------------------------------------------
+  const [scopeBusy, setScopeBusy] = React.useState(false);
+
+  async function submitScope(choice: ScopeChoice | null, slugs: string[]) {
+    if (scopeBusy) return;
+    setScopeBusy(true);
+    try {
+      const response = await fetch(`/api/runs/${runId}/scope`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(choice ? { choice, slugs } : { dismiss: true }),
+      });
+      const payload = (await response.json()) as {
+        state?: RunState | null;
+        error?: string;
+        dropped?: number;
+      };
+      if (!response.ok) {
+        setNotice(payload.error ?? 'That scope could not be saved.');
+        return;
+      }
+      if (payload.state) setState(payload.state);
+      if (payload.dropped) {
+        setNotice(
+          `${payload.dropped} offer${payload.dropped === 1 ? '' : 's'} left out of this run — build them in a second run.`,
+        );
+      }
+    } catch {
+      setNotice('That scope could not be saved. The brief is untouched.');
+    } finally {
+      setScopeBusy(false);
+    }
+  }
 
   // ---- chat --------------------------------------------------------------
   async function sendTurn(message: string | null) {
@@ -709,6 +755,16 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
       </div>
 
       {generating && <GeneratingToast count={Object.keys(live).length} />}
+
+      <ScopePicker
+        open={state.discovery.needsScopeChoice}
+        companyName={state.slots.company_name ?? null}
+        services={state.discovery.services}
+        pagesRead={state.discovery.pagesRead}
+        busy={scopeBusy}
+        onSubmit={(choice, slugs) => void submitScope(choice, slugs)}
+        onDismiss={() => void submitScope(null, [])}
+      />
 
       <CommandPalette
         open={palette.open}

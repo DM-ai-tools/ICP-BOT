@@ -15,7 +15,12 @@ import { masterPrompt, masterPromptInfo, masterPromptVersion } from '../src/lib/
 import { SECTIONS } from '../src/lib/sections';
 import { countObjections, parseSections, spliceSection } from '../src/lib/markdown';
 import { inspectDocument, reportFor } from '../src/lib/validate';
-import { buildInputBlock, buildWhyFraming, type GenerationContext } from '../src/lib/generate';
+import {
+  buildInputBlock,
+  buildUserMessage,
+  buildWhyFraming,
+  type GenerationContext,
+} from '../src/lib/generate';
 import { buildAwarenessMapDocx, buildSingleDocx, coverInfoFrom, exportFilename } from '../src/lib/docx';
 import { buildPdf } from '../src/lib/pdf';
 import { comparisonToMarkdown, type ComparisonRow } from '../src/lib/comparison';
@@ -28,6 +33,14 @@ import {
 import { buildResolverUserMessage } from '../src/lib/resolve';
 import { buildXlsx, flattenMarkdown, heightFor } from '../src/lib/xlsx';
 import { SELECTABLE_FORMATS } from '../src/lib/export-service';
+import { extractLinks, pageSummary } from '../src/lib/scrape';
+import { passesFor, sectionsForPass } from '../src/lib/sections';
+import {
+  MIN_SERVICES_TO_ASK,
+  groupServices,
+  slugifyService,
+  type DiscoveredService,
+} from '../src/lib/discover-types';
 import { AUDIENCE_MODES, DEFAULT_AUDIENCE_MODE, isAudienceMode } from '../src/lib/settings-shared';
 import {
   ASKABLE_SLOTS,
@@ -41,6 +54,7 @@ import {
   mergeResolution,
   normaliseServices,
   priceLine,
+  SERVICE_CAP,
   type SlotMeta,
   type SlotValues,
 } from '../src/lib/slots';
@@ -188,9 +202,42 @@ const blanked = mergeResolution(
 );
 check('nulls do not wipe resolved slots', blanked.slots.company_name === 'Radius');
 
-check('services are capped at three', normaliseServices([
-  { name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' },
-]).length === 3);
+// Two ceilings, deliberately. Prose gets three: a strategist describing a
+// business in one sentence is not naming ten offers, and a resolver that
+// returns ten is inventing. A list ticked off the client's own website gets the
+// full run ceiling, because a human confirmed every entry.
+const fromProse = mergeResolution(
+  {},
+  {},
+  { services: [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }] },
+  { services: { source: 'inferred', confidence: 0.6 } },
+);
+check('prose-resolved services are still capped at three', fromProse.slots.services?.length === 3);
+
+const fromPicker = mergeResolution(
+  {},
+  {},
+  {
+    services: [
+      { name: 'Whole business', tier: 'generic' as const, slug: 'whole-business' },
+      ...Array.from({ length: 8 }, (_, i) => ({
+        name: `Offer ${i}`,
+        tier: 'focused' as const,
+        slug: `offer-${i}`,
+      })),
+    ],
+  },
+  { services: { source: 'stated', confidence: 1 } },
+);
+check('a ticked catalogue is not capped at three', fromPicker.slots.services?.length === 9);
+check('the whole-business entry keeps its tier', fromPicker.slots.services?.[0]?.tier === 'generic');
+check('sub-services keep their slug', fromPicker.slots.services?.[1]?.slug === 'offer-0');
+check(
+  'services never exceed the run ceiling',
+  normaliseServices(
+    Array.from({ length: 40 }, (_, i) => ({ name: `Offer ${i}`, tier: 'focused' as const })),
+  ).length === SERVICE_CAP,
+);
 check('duplicate services collapse', normaliseServices([
   { name: 'SEO' }, { name: 'seo' },
 ]).length === 1);
@@ -879,6 +926,106 @@ const noPriceText =
   ((await noPriceZip.file('xl/worksheets/sheet1.xml')?.async('string')) ?? '') +
   ((await noPriceZip.file('xl/sharedStrings.xml')?.async('string')) ?? '');
 check('a blank price says so rather than inventing one', noPriceText.includes('quote/assessment required'));
+
+// ---------------------------------------------------------------------------
+
+section('Sub-service discovery and scope');
+
+// Link extraction is the crawler's eyes. If it follows off-site links or
+// swallows the anchor text, everything downstream degrades quietly.
+const navHtml = `
+  <nav>
+    <a href="/home-loans/first-home-buyer">First Home Buyer Loans</a>
+    <a href="/home-loans/refinance">Refinancing</a>
+    <a href="https://facebook.com/argfinance">Facebook</a>
+    <a href="/about-us">About</a>
+    <a href="mailto:info@argfinance.com.au">Email</a>
+    <a href="/brochure.pdf">Brochure</a>
+    <a href="/home-loans/refinance#calc">Refinancing again</a>
+  </nav>`;
+const links = extractLinks(navHtml, 'https://argfinance.com.au');
+check('off-site links are dropped', links.every((l) => l.url.includes('argfinance.com.au')));
+check('mailto and file links are dropped', links.every((l) => !/mailto:|\.pdf$/.test(l.url)));
+check('fragments collapse to one entry', links.filter((l) => l.url.endsWith('/refinance')).length === 1);
+check('anchor text survives', links.some((l) => l.text === 'First Home Buyer Loans'));
+
+const summarised = pageSummary(
+  '<title>Truck Loans | ARG</title><meta name="description" content="Finance for owner-drivers."><h1>Truck &amp; Trailer Finance</h1>',
+);
+check('page title is read', summarised.title === 'Truck Loans | ARG');
+check('page heading is read and decoded', summarised.heading === 'Truck & Trailer Finance');
+check('meta description is read', summarised.description === 'Finance for owner-drivers.');
+
+check('slugs are stable and filename-safe', slugifyService('First Home Buyer Loans & Schemes') === 'first-home-buyer-loans-and-schemes');
+
+const catalogue: DiscoveredService[] = [
+  { name: 'First home buyer loans', slug: 'fhb', group: 'Home loans', summary: '', url: null },
+  { name: 'Refinancing', slug: 'refi', group: 'Home loans', summary: '', url: null },
+  { name: 'Truck finance', slug: 'truck', group: 'Business', summary: '', url: null },
+];
+const byGroup = groupServices(catalogue);
+check('services group by the site’s own headings', byGroup.length === 2);
+check('group order is first-seen', byGroup[0].group === 'Home loans');
+check('every service survives grouping', byGroup.flatMap((g) => g.services).length === 3);
+
+// The gate must stay shut for one-offer sites. This is the guard that keeps a
+// dentist's brief exactly as fast as it was before any of this existed.
+check('a single-offer site never triggers the picker', MIN_SERVICES_TO_ASK > 1);
+
+// The cheaper path must still write the whole document — the saving comes from
+// one fewer call, never from fewer sections.
+const fullSections = passesFor('full').flatMap((p) => sectionsForPass('full', p));
+const focusedSections = passesFor('focused').flatMap((p) => sectionsForPass('focused', p));
+check('the full plan uses three passes', passesFor('full').length === 3);
+check('the focused plan uses two passes', passesFor('focused').length === 2);
+check('a focused document still has every section', focusedSections.length === fullSections.length);
+check(
+  'focused sections are in the same order',
+  focusedSections.every((s, i) => s.key === fullSections[i].key),
+);
+check('the focused plan opens with the title line', focusedSections[0].key === 'title_line');
+check(
+  'the focused plan closes with the checklist',
+  focusedSections[focusedSections.length - 1].key === 'qualification_checklist',
+);
+check(
+  'the avatar is established in the focused first pass',
+  sectionsForPass('focused', 'A').some((s) => s.key === 'avatar_name'),
+);
+check(
+  'objections and the checklist share the focused last pass',
+  ['objections', 'qualification_checklist'].every((key) =>
+    sectionsForPass('focused', 'B').some((s) => s.key === key),
+  ),
+);
+
+// A sub-service profile that quietly widens to the whole business is the exact
+// failure the split exists to prevent, so the guardrail is asserted by content.
+const focusedMessage = buildUserMessage('A', {
+  runId: 'test',
+  slots: { ...nearlyDone, company_name: 'ARG Finance' },
+  service: { name: 'Truck finance', price_terms: null, tier: 'focused', slug: 'truck' },
+  scenario: 'problem_aware',
+  whyFraming: 'test',
+  plan: 'focused',
+  siblingServices: ['Truck finance', 'First home buyer loans', 'Refinancing'],
+});
+check('the sub-service guardrail fires for focused documents', focusedMessage.includes('SUB-SERVICE'));
+check('it names the offer being profiled', focusedMessage.includes('Truck finance'));
+check('it names the siblings to exclude', focusedMessage.includes('First home buyer loans'));
+check('it does not list the offer as its own sibling', !/other offers are:[^\n]*Truck finance/.test(focusedMessage));
+check('it says the document is narrower, not shorter', focusedMessage.includes('not a shorter document'));
+check('the focused task announces two parts', focusedMessage.includes('PART 1 OF 2'));
+
+const genericMessage = buildUserMessage('A', {
+  runId: 'test',
+  slots: { ...nearlyDone, company_name: 'ARG Finance' },
+  service: { name: 'Mortgage broking', price_terms: null },
+  scenario: 'problem_aware',
+  whyFraming: 'test',
+});
+check('a whole-business document carries no sub-service guardrail', !genericMessage.includes('SUB-SERVICE'));
+check('the full task still announces three parts', genericMessage.includes('PART 1 OF 3'));
 
 // ---------------------------------------------------------------------------
 // Tally last, so a failure in ANY section above actually fails the run.

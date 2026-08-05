@@ -40,6 +40,7 @@ export type CallKind =
   | 'repair'
   | 'compare'
   | 'industry_pack'
+  | 'discover'
   | 'title';
 
 export interface Usage {
