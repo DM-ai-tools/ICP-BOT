@@ -148,19 +148,64 @@ interface Candidate {
   score: number;
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Fetch, and try again before giving up.
+ *
+ * Firewalls in front of small-business sites throttle rather than block: the
+ * same URL, from the same container, answers on one request and refuses the
+ * next. argfinance.com.au did exactly this in production — two identical runs
+ * a minute apart returned eighteen offers and then zero, and a single refusal
+ * was enough for discovery to conclude the site sells one thing and skip the
+ * picker entirely.
+ *
+ * Only the critical path retries: the homepage and the sitemap. The sixteen
+ * page reads do not, because one slow page must never hold up a brief and
+ * their content is a bonus rather than the basis of the catalogue.
+ */
+async function fetchWithRetry(
+  url: string,
+  opts: Parameters<typeof fetchPage>[1] = {},
+  attempts = 3,
+): Promise<Awaited<ReturnType<typeof fetchPage>>> {
+  let last = await fetchPage(url, opts);
+  for (let attempt = 1; attempt < attempts && !last.ok; attempt++) {
+    // Backing off matters more than retrying: an immediate repeat looks like
+    // exactly the hammering that triggered the throttle.
+    await sleep(1200 * attempt + Math.floor(Math.random() * 400));
+    last = await fetchPage(url, opts);
+  }
+  return last;
+}
+
 export async function discoverServices(
   rootUrl: string,
   opts: { runId?: string } = {},
 ): Promise<DiscoveryResult> {
   try {
-    const home = await fetchPage(rootUrl);
+    let home = await fetchWithRetry(rootUrl);
     if (!home.ok || !home.html) {
       return { status: 'failed', services: [], pagesRead: 0, reason: home.reason };
     }
 
-    const navLinks = extractLinks(home.html, home.url);
-    const mapLinks = await sitemapLinks(home.url);
-    const candidates = rankCandidates([...navLinks, ...mapLinks], home.url);
+    let navLinks = extractLinks(home.html, home.url);
+    let mapLinks = await sitemapLinks(home.url);
+    let candidates = rankCandidates([...navLinks, ...mapLinks], home.url);
+
+    // A page that parsed but yielded nothing is the throttled case: a shell, a
+    // holding page, or a challenge. Worth one more look before declaring that a
+    // business with a nav bar sells a single thing.
+    if (candidates.length === 0) {
+      await sleep(2000);
+      const second = await fetchWithRetry(rootUrl, {}, 2);
+      if (second.ok && second.html) {
+        home = second;
+        navLinks = extractLinks(second.html, second.url);
+        mapLinks = await sitemapLinks(second.url);
+        candidates = rankCandidates([...navLinks, ...mapLinks], second.url);
+      }
+    }
 
     // Logged because these three numbers are the entire diagnosis when a site
     // behaves differently in production. A homepage that yields no links is
@@ -170,14 +215,24 @@ export async function discoverServices(
       `[discover] ${home.url} — nav=${navLinks.length} sitemap=${mapLinks.length} ranked=${candidates.length}`,
     );
 
+    // Not 'single'. A site whose navigation yielded nothing after retries was
+    // not read — and reporting that as "this business sells one thing" is a
+    // claim we have no evidence for, indistinguishable from the truth, and the
+    // exact reason a strategist sees no picker and assumes the feature is
+    // broken.
     if (candidates.length === 0) {
-      return { status: 'single', services: [], pagesRead: 1 };
+      return {
+        status: 'failed',
+        services: [],
+        pagesRead: 1,
+        reason: 'the site returned no navigation links (throttled, or rendered entirely in JavaScript)',
+      };
     }
 
     const pages = await readPages(candidates.slice(0, MAX_PAGES));
     const catalogue = await buildCatalogue(
       home.url,
-      pageSummary(home.html),
+      pageSummary(home.html ?? ''),
       pages,
       candidates,
       opts.runId,
@@ -224,10 +279,10 @@ async function sitemapLinks(rootUrl: string): Promise<{ url: string; text: strin
   }
 
   for (const path of [...new Set(paths)]) {
-    const res = await fetchPage(`${origin}${path}`, {
+    const res = await fetchWithRetry(`${origin}${path}`, {
       timeoutMs: PAGE_TIMEOUT_MS,
       accept: 'application/xml,text/xml',
-    });
+    }, 2);
     if (!res.ok || !res.html) continue;
 
     // A sitemap index points at more sitemaps. Follow one level, no further:
