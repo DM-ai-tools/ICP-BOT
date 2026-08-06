@@ -234,7 +234,7 @@ export function buildStructureSvg(input: StructureInput): string {
       `<rect x="${spineX + 16}" y="${rowY}" width="${W - spineX - 16 - PAD}" height="${blockH}" rx="9" fill="${background}" stroke="${accent}" stroke-opacity="0.32" stroke-width="1"/>`,
       `<rect x="${spineX + 16}" y="${rowY}" width="4" height="${blockH}" rx="2" fill="${accent}"/>`,
       `<text x="${spineX + 34}" y="${rowY + 24}" font-size="14" font-weight="700" fill="${accent}" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">${esc(truncate(folder.folder ?? '(pack root)', 46))}</text>`,
-      `<text x="${spineX + 34}" y="${rowY + 42}" font-size="12" fill="${C.muted}" font-family="-apple-system, Segoe UI, sans-serif">${esc(truncate(folder.serviceName, 52))} · ${folder.scenarios.length} awareness stages · ${folder.tier === 'generic' ? 'whole business' : 'sub-service'}</text>`,
+      `<text x="${spineX + 34}" y="${rowY + 42}" font-size="12" fill="${C.muted}" font-family="-apple-system, Segoe UI, sans-serif">${esc(truncate(folder.serviceName, 52))} · ${folder.scenarios.length} awareness stages${folder.tier === 'focused' ? ' · sub-service' : ''}</text>`,
     );
 
     let childY = rowY + FOLDER_H;
@@ -254,8 +254,17 @@ export function buildStructureSvg(input: StructureInput): string {
   // ---- legend -------------------------------------------------------------
   const legendY = y + 4;
   const legend: [string, string][] = [];
-  if (input.folders.some((f) => f.tier === 'generic')) {
-    legend.push([C.generic, 'Whole-business profile — the parent']);
+  const genericCount = input.folders.filter((f) => f.tier === 'generic').length;
+  if (genericCount > 0) {
+    // "The parent" only means something when there are children under it. Three
+    // services named in conversation are three peers, and calling each of them
+    // the whole business reads as a mistake.
+    legend.push([
+      C.generic,
+      genericCount > 1 || !input.folders.some((f) => f.tier === 'focused')
+        ? 'Profile set — one per offer'
+        : 'Whole-business profile — the parent',
+    ]);
   }
   if (input.folders.some((f) => f.tier === 'focused')) {
     legend.push([C.focused, 'Sub-service profile — one offer each']);
