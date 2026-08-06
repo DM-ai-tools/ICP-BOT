@@ -22,6 +22,7 @@ import { buildXlsx } from './xlsx';
 import { comparisonToMarkdown, type ComparisonRow } from './compare';
 import { slugify, type SlotValues } from './slots';
 import { slotsOf } from './run-service';
+import { buildStructure, buildStructureSvg, buildStructureText } from './structure-map';
 
 export interface ExportTarget {
   runId: string;
@@ -224,6 +225,14 @@ export type ExportFormat = 'pdf' | 'xlsx' | 'docx' | 'md';
  */
 export const SELECTABLE_FORMATS: ExportFormat[] = ['pdf', 'xlsx'];
 
+/** Human names, for the structure map and anything else people read. */
+export const FORMAT_LABEL: Record<ExportFormat, string> = {
+  pdf: 'PDF',
+  xlsx: 'Excel',
+  docx: 'Word',
+  md: 'Markdown',
+};
+
 /** documentId → which formats to include for that scenario. */
 export type ZipSelection = Map<string, Set<ExportFormat>>;
 
@@ -384,6 +393,28 @@ export async function exportZip(
 
     zip.file('ARCHITECTURE.md', architectureMap(run, slots, groups, wants));
   }
+
+  // The map, drawn from the same data the folders were built from — as a
+  // picture and as text, because half the people opening this will want one
+  // and half the other. Identical to what the chat showed after the build.
+  const structure = buildStructure({
+    zipName: `${company}-icp-pack-${stamp}.zip`,
+    companyName: slots.company_name ?? null,
+    documents: docs.map((doc) => ({
+      serviceIndex: doc.serviceIndex,
+      serviceName: doc.serviceName,
+      tier: doc.tier === 'focused' ? 'focused' : 'generic',
+      serviceSlug: doc.serviceSlug ?? null,
+      awarenessLabel: awarenessShort(doc.scenario as AwarenessKey),
+    })),
+    comparisonFor: run.comparisons.map((c) => c.serviceIndex),
+    formats: SELECTABLE_FORMATS.filter((format) => docs.some((doc) => wants(doc, format))).map(
+      (format) => FORMAT_LABEL[format],
+    ),
+  });
+
+  zip.file('folder-structure.svg', buildStructureSvg(structure));
+  zip.file('FILE-STRUCTURE.txt', buildStructureText(structure));
 
   zip.file(
     'README.txt',

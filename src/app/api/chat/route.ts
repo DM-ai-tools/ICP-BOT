@@ -45,6 +45,7 @@ import {
 import { getAudienceMode } from '@/lib/settings';
 import { errorResponse, sseStream } from '@/lib/sse';
 import type { ChatEvent } from '@/lib/types';
+import { guard } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -58,6 +59,9 @@ interface ChatRequest {
 }
 
 export async function POST(request: Request) {
+  const gate = await guard();
+  if (gate.response) return gate.response;
+
   let body: ChatRequest;
   try {
     body = (await request.json()) as ChatRequest;

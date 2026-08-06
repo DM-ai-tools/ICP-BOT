@@ -36,6 +36,7 @@ import { computeReadiness, type ServiceSlot } from '@/lib/slots';
 import { errorResponse, sseStream } from '@/lib/sse';
 import { validateAndRepair } from '@/lib/validate';
 import { docKeyFor, type DocumentStatus, type GenerateEvent } from '@/lib/types';
+import { guard } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,6 +51,9 @@ interface GenerateRequest {
 }
 
 export async function POST(request: Request) {
+  const gate = await guard();
+  if (gate.response) return gate.response;
+
   let body: GenerateRequest;
   try {
     body = (await request.json()) as GenerateRequest;

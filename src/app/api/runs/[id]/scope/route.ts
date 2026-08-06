@@ -22,6 +22,7 @@ import {
 import { discoveredServicesOf, loadRun, loadRunState, slotsOf } from '@/lib/run-service';
 import { normaliseServices, type ServiceSlot } from '@/lib/slots';
 import { errorResponse, jsonResponse } from '@/lib/sse';
+import { guard } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,9 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const gate = await guard();
+  if (gate.response) return gate.response;
+
   const { id: runId } = await params;
 
   let body: ScopeBody;

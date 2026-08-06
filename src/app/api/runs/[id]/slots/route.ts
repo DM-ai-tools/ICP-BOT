@@ -26,6 +26,7 @@ import {
 import { isAwarenessKey } from '@/lib/awareness';
 import { normaliseUrl } from '@/lib/resolve';
 import { errorResponse, jsonResponse } from '@/lib/sse';
+import { guard } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,6 +37,9 @@ interface PatchBody {
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const gate = await guard();
+  if (gate.response) return gate.response;
+
   const { id } = await params;
 
   let body: PatchBody;

@@ -38,6 +38,15 @@ interface ChatPanelProps {
   disabled?: boolean;
   /** Results are on screen, so the column is narrower. */
   compact?: boolean;
+  /**
+   * Rendered at the end of the thread, after the last message.
+   *
+   * Used for the folder map that appears once a build finishes. It belongs in
+   * the conversation rather than in a panel — it is the answer to "what did I
+   * just get", and that question is asked at the moment the last document
+   * lands, with the chat still on screen.
+   */
+  footer?: React.ReactNode;
 }
 
 export function ChatPanel({
@@ -50,6 +59,7 @@ export function ChatPanel({
   onStop,
   disabled,
   compact,
+  footer,
 }: ChatPanelProps) {
   const [draft, setDraft] = React.useState('');
   const [pinned, setPinned] = React.useState(true);
@@ -115,6 +125,8 @@ export function ChatPanel({
           {busy && streaming === null && <Thinking />}
 
           {notice && <Notice text={notice} onDismiss={onDismissNotice} />}
+
+          {footer && <div className="mt-4 animate-rise">{footer}</div>}
 
           <div ref={endRef} className="h-2" />
         </div>

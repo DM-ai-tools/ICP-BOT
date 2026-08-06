@@ -1,11 +1,15 @@
 import { prisma } from '@/lib/db';
 import { loadRun, serialiseRun } from '@/lib/run-service';
 import { errorResponse, jsonResponse } from '@/lib/sse';
+import { guard } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const gate = await guard();
+  if (gate.response) return gate.response;
+
   const { id } = await params;
   try {
     const run = await loadRun(id);
@@ -26,6 +30,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 }
 
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const gate = await guard();
+  if (gate.response) return gate.response;
+
   const { id } = await params;
   try {
     await prisma.run.delete({ where: { id } });

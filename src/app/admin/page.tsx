@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { ArrowLeft, Download, FileText, Plus } from 'lucide-react';
 import { prisma } from '@/lib/db';
 import { APP_NAME } from '@/lib/brand';
@@ -7,6 +8,8 @@ import { ThemeToggle } from '@/components/theme-provider';
 import { Badge, Button } from '@/components/ui/primitives';
 import { getAudienceMode } from '@/lib/settings';
 import { AudienceModeToggle } from '@/components/audience-mode-toggle';
+import { UserManager } from '@/components/user-manager';
+import { currentUser } from '@/lib/auth';
 import { slotsOf } from '@/lib/run-service';
 import { markdownToPlainText } from '@/lib/markdown';
 import { cn } from '@/lib/utils';
@@ -47,6 +50,13 @@ function when(date: Date): string {
 }
 
 export default async function AdminPage() {
+  // The middleware only checks that a cookie exists — it deliberately does no
+  // cryptography, because the same token verified in Node and failed on the
+  // Edge runtime. So the role check lives here, in Node, where it works.
+  const viewer = await currentUser();
+  if (!viewer) redirect('/login?next=%2Fadmin');
+  if (viewer.role !== 'admin') redirect('/');
+
   const [byKind, byModel, runTotals, runs, documents, failures, docStatuses] = await Promise.all([
     prisma.usageLog.groupBy({
       by: ['kind'],
@@ -151,6 +161,14 @@ export default async function AdminPage() {
         </section>
 
         <AudienceModeToggle initial={audienceMode} />
+
+        {/* ---- accounts ---------------------------------------------- */}
+        <Section
+          title="Accounts"
+          hint="One administrator and five people who just need the chatbot. Rename anyone, reset a password, or switch an account off — no redeploy needed."
+        >
+          <UserManager />
+        </Section>
 
         {/* ---- spend by call type ------------------------------------ */}
         <Section

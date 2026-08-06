@@ -1,10 +1,14 @@
 import { getAudienceMode, isAudienceMode, setAudienceMode } from '@/lib/settings';
 import { errorResponse, jsonResponse } from '@/lib/sse';
+import { guard } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  const gate = await guard({ admin: true });
+  if (gate.response) return gate.response;
+
   try {
     return jsonResponse({ audienceMode: await getAudienceMode() });
   } catch (err) {
@@ -13,6 +17,9 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const gate = await guard({ admin: true });
+  if (gate.response) return gate.response;
+
   let body: { audienceMode?: unknown };
   try {
     body = (await request.json()) as { audienceMode?: unknown };

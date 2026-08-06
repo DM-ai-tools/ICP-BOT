@@ -20,12 +20,16 @@ import {
   parseZipSelection,
 } from '@/lib/export-service';
 import { errorResponse } from '@/lib/sse';
+import { guard } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 export async function GET(request: Request) {
+  const gate = await guard();
+  if (gate.response) return gate.response;
+
   const url = new URL(request.url);
   const runId = url.searchParams.get('runId');
   const documentId = url.searchParams.get('documentId');

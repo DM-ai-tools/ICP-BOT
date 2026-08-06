@@ -35,6 +35,18 @@ import { buildXlsx, flattenMarkdown, heightFor } from '../src/lib/xlsx';
 import { SELECTABLE_FORMATS } from '../src/lib/export-service';
 import { extractLinks, pageSummary } from '../src/lib/scrape';
 import { isNotAService } from '../src/lib/discover';
+import {
+  isAdminPath,
+  isPublicPath,
+  signSession,
+  verifySession,
+} from '../src/lib/auth-shared';
+import { hashPassword, seedAccounts, verifyPassword } from '../src/lib/auth';
+import {
+  buildStructure,
+  buildStructureSvg,
+  buildStructureText,
+} from '../src/lib/structure-map';
 import { passesFor, sectionsForPass } from '../src/lib/sections';
 import {
   MIN_SERVICES_TO_ASK,
@@ -1065,6 +1077,144 @@ const genericMessage = buildUserMessage('A', {
 });
 check('a whole-business document carries no sub-service guardrail', !genericMessage.includes('SUB-SERVICE'));
 check('the full task still announces three parts', genericMessage.includes('PART 1 OF 3'));
+
+// ---------------------------------------------------------------------------
+
+section('Accounts and sessions');
+
+const SECRET = 'a-test-secret-long-enough-to-pass';
+
+const validSession = await signSession(
+  { sub: 'u1', role: 'admin', name: 'Admin', v: 1, iat: 1000, exp: Math.floor(Date.now() / 1000) + 600 },
+  SECRET,
+);
+check('a signed session verifies', (await verifySession(validSession, SECRET))?.sub === 'u1');
+check('the role survives the round trip', (await verifySession(validSession, SECRET))?.role === 'admin');
+check('a different secret does not verify', (await verifySession(validSession, 'other-secret-entirely')) === null);
+check('a tampered payload does not verify', (await verifySession(`x${validSession}`, SECRET)) === null);
+check('a truncated token does not verify', (await verifySession(validSession.split('.')[0], SECRET)) === null);
+check('nothing is not a session', (await verifySession(undefined, SECRET)) === null);
+
+const expired = await signSession(
+  { sub: 'u1', role: 'user', name: 'X', v: 1, iat: 10, exp: Math.floor(Date.now() / 1000) - 60 },
+  SECRET,
+);
+check('an expired session is rejected', (await verifySession(expired, SECRET)) === null);
+
+// Swapping the role in a payload must invalidate the signature — this is the
+// whole reason the cookie is signed rather than just encoded.
+const [body] = validSession.split('.');
+const forgedBody = Buffer.from(
+  JSON.stringify({ sub: 'u1', role: 'admin', name: 'X', v: 1, iat: 1, exp: 9999999999 }),
+)
+  .toString('base64url');
+check('a re-encoded payload with the old signature fails', (await verifySession(`${forgedBody}.${validSession.split('.')[1]}`, SECRET)) === null);
+check('the body is not the signature', body !== validSession.split('.')[1]);
+
+check('login is reachable signed out', isPublicPath('/login'));
+check('the health check is reachable signed out', isPublicPath('/api/health'));
+check('the workspace is not reachable signed out', !isPublicPath('/'));
+check('a run is not reachable signed out', !isPublicPath('/r/abc123'));
+check('admin is an admin path', isAdminPath('/admin'));
+check('admin APIs are admin paths', isAdminPath('/api/admin/users'));
+check('the chat API is not an admin path', !isAdminPath('/api/chat'));
+
+const hash = await hashPassword('correct horse battery staple');
+check('a hash is salted, not the password', !hash.includes('correct horse'));
+check('two hashes of the same password differ', (await hashPassword('same')) !== (await hashPassword('same')));
+check('the right password verifies', await verifyPassword('correct horse battery staple', hash));
+check('the wrong password does not', !(await verifyPassword('correct horse battery stapl', hash)));
+check('a malformed hash does not verify', !(await verifyPassword('anything', 'not-a-hash')));
+
+const seeded = seedAccounts();
+check('six accounts are seeded', seeded.length === 6);
+check('exactly one is an administrator', seeded.filter((a) => a.role === 'admin').length === 1);
+check('five are ordinary users', seeded.filter((a) => a.role === 'user').length === 5);
+check('every seeded account has a password', seeded.every((a) => a.password.length >= 8));
+check('usernames are unique', new Set(seeded.map((a) => a.username)).size === 6);
+
+// ---------------------------------------------------------------------------
+
+section('Folder structure map');
+
+const mapStages = ['Unaware', 'Problem-Aware', 'Solution-Aware', 'Product-Aware'];
+const mapDocs = [
+  ...mapStages.map((s) => ({
+    serviceIndex: 0,
+    serviceName: 'Mortgage broking',
+    tier: 'generic' as const,
+    serviceSlug: 'whole-business',
+    awarenessLabel: s,
+  })),
+  ...mapStages.map((s) => ({
+    serviceIndex: 1,
+    serviceName: 'First home buyer loans',
+    tier: 'focused' as const,
+    serviceSlug: 'first-home-buyer-loans',
+    awarenessLabel: s,
+  })),
+];
+
+const nestedStructure = buildStructure({
+  zipName: 'arg-finance-icp-pack-20260806.zip',
+  companyName: 'ARG Finance',
+  documents: mapDocs,
+  comparisonFor: [0, 1],
+  formats: ['PDF', 'Excel'],
+});
+
+check('one folder per service', nestedStructure.folders.length === 2);
+check('the whole-business folder is numbered first', nestedStructure.folders[0].folder === '01-whole-business');
+check('a sub-service folder uses its slug', nestedStructure.folders[1].folder === '02-first-home-buyer-loans');
+check('tiers survive', nestedStructure.folders[0].tier === 'generic' && nestedStructure.folders[1].tier === 'focused');
+check('a multi-service pack ships the architecture note', nestedStructure.rootFiles.some((f) => f.name === 'ARCHITECTURE.md'));
+check('the map ships as a picture', nestedStructure.rootFiles.some((f) => f.name === 'folder-structure.svg'));
+check('the map ships as text', nestedStructure.rootFiles.some((f) => f.name === 'FILE-STRUCTURE.txt'));
+
+const nestedSvg = buildStructureSvg(nestedStructure);
+check('the svg is well formed', nestedSvg.startsWith('<svg') && nestedSvg.trimEnd().endsWith('</svg>'));
+check('the whole-business colour appears', nestedSvg.includes('#0d9488'));
+check('the sub-service colour appears', nestedSvg.includes('#7c3aed'));
+check('the two tiers are not the same colour', nestedSvg.includes('#0d9488') && nestedSvg.includes('#7c3aed'));
+check('the zip name is drawn', nestedSvg.includes('arg-finance-icp-pack-20260806.zip'));
+check('the svg declares a size', /width="\d+" height="\d+"/.test(nestedSvg));
+check('the svg is labelled for screen readers', nestedSvg.includes('aria-label='));
+
+// A company name is user input and lands inside an XML document.
+const hostile = buildStructureSvg(
+  buildStructure({
+    zipName: 'x.zip',
+    companyName: '<script>alert(1)</script>',
+    documents: [{ serviceIndex: 0, serviceName: 'A & B "quoted"', tier: 'generic', serviceSlug: null, awarenessLabel: 'Unaware' }],
+    comparisonFor: [],
+    formats: ['PDF'],
+  }),
+);
+check('markup in a service name is escaped', !hostile.includes('<script>'));
+check('an ampersand is escaped', hostile.includes('&amp;'));
+
+const flatStructure = buildStructure({
+  zipName: 'dental-icp-pack.zip',
+  companyName: 'Harbourline Dental',
+  documents: mapStages.map((s) => ({
+    serviceIndex: 0,
+    serviceName: 'Invisalign',
+    tier: 'generic' as const,
+    serviceSlug: null,
+    awarenessLabel: s,
+  })),
+  comparisonFor: [0],
+  formats: ['PDF', 'Excel'],
+});
+check('a single-offer pack stays flat', flatStructure.folders[0].folder === null);
+check('a flat pack has no architecture note', !flatStructure.rootFiles.some((f) => f.name === 'ARCHITECTURE.md'));
+check('a flat pack still ships both maps', flatStructure.rootFiles.filter((f) => /FILE-STRUCTURE|folder-structure/.test(f.name)).length === 2);
+
+const mapText = buildStructureText(nestedStructure);
+check('the text names the company', mapText.includes('ARG Finance'));
+check('the text lists every folder', nestedStructure.folders.every((f) => mapText.includes(f.folder!)));
+check('the text distinguishes the tiers', mapText.includes('WHOLE BUSINESS') && mapText.includes('SUB-SERVICE'));
+check('the text says nothing is invented', /not given|not supplied|rather than estimating/i.test(mapText));
 
 // ---------------------------------------------------------------------------
 // Tally last, so a failure in ANY section above actually fails the run.

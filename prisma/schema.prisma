@@ -260,6 +260,41 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+/// Who may use this instance.
+///
+/// Six accounts, seeded once on first boot: one admin who sees everything, and
+/// five people who just need the chatbot. Kept in the database rather than in
+/// environment variables so the admin can rename accounts and reset passwords
+/// without a redeploy — the people using this are not going to open Railway.
+model User {
+  id String @id @default(cuid())
+
+  /// Lowercased at write time; the login form is case-insensitive.
+  username     String @unique
+  /// Shown in the header. Changing it does not change how they sign in.
+  displayName  String
+  /// scrypt, salted per user. Never a plaintext column, not even briefly.
+  passwordHash String
+
+  /// admin — full app, settings, usage and user management.
+  /// user  — chatbot, results and download. Nothing else.
+  role String @default("user")
+
+  /// Switched off rather than deleted, so their runs keep an owner.
+  active Boolean @default(true)
+
+  /// Bumped whenever the password changes, which invalidates every cookie
+  /// already issued to them. Without it, a reset password leaves old sessions
+  /// working — the one thing a password reset is supposed to stop.
+  tokenVersion Int @default(1)
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([username])
+}
+
 /// Per-call token and cost logging.
 model UsageLog {
   id    String  @id @default(cuid())

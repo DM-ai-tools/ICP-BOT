@@ -35,6 +35,8 @@ import { ChatPanel, type ThreadMessage } from '@/components/chat-panel';
 import { CommandPalette, useCommandPalette, type Command } from '@/components/command-palette';
 import { ResultsView, type LiveDoc } from '@/components/results-view';
 import { ScopePicker } from '@/components/scope-picker';
+import { SignOut } from '@/components/sign-out';
+import { StructureCard } from '@/components/structure-card';
 import type { ScopeChoice } from '@/lib/discover-types';
 import { ThemeToggle, useTheme } from '@/components/theme-provider';
 import { Button, Divider, Hint, Kbd, ProgressTrack, Segmented, Spinner } from '@/components/ui/primitives';
@@ -55,10 +57,24 @@ import { cn } from '@/lib/utils';
 interface WorkspaceProps {
   runId: string;
   initialState: RunState;
+  /**
+   * admin sees the whole workspace. user gets the chatbot, the results and a
+   * download — the brief internals, industry panel, usage figures and command
+   * palette are noise to someone who just wants the profiles.
+   */
+  role?: 'admin' | 'user';
+  userName?: string;
   initialMessages: ThreadMessage[];
 }
 
-export function Workspace({ runId, initialState, initialMessages }: WorkspaceProps) {
+export function Workspace({
+  runId,
+  initialState,
+  initialMessages,
+  role = 'admin',
+  userName,
+}: WorkspaceProps) {
+  const simple = role !== 'admin';
   const router = useRouter();
 
   const [state, setState] = React.useState<RunState>(initialState);
@@ -396,6 +412,13 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
   // ---- layout -------------------------------------------------------------
   const hasResults = state.documents.length > 0 || Object.keys(live).length > 0;
 
+  // The folder map appears only once the build has actually finished. Showing
+  // it mid-run would draw a tree of folders that do not exist yet.
+  const buildComplete =
+    !generating &&
+    state.documents.length > 0 &&
+    state.documents.every((doc) => doc.status !== 'pending' && doc.status !== 'generating');
+
   /** Docked to a side, or detached and floating. */
   type Dock = 'left' | 'right' | 'float';
   const [briefDock, setBriefDock] = React.useState<Dock>('right');
@@ -655,6 +678,8 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
         hasResults={hasResults}
         mobileView={mobileView}
         onMobileView={setMobileView}
+        simple={simple}
+        userName={userName}
       />
 
       <div className="relative flex min-h-0 flex-1">
@@ -678,6 +703,15 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
             onSend={(text) => void sendTurn(text)}
             onStop={() => chatAbort.current?.abort()}
             compact={hasResults}
+            footer={
+              buildComplete ? (
+                <StructureCard
+                  documents={state.documents}
+                  comparisons={state.comparisons}
+                  companyName={state.slots.company_name ?? null}
+                />
+              ) : null
+            }
           />
         </div>
 
@@ -715,7 +749,7 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
             CSS order rather than conditional placement, so moving the brief
             from one edge to the other never unmounts it — an unmount would
             discard scroll position and any half-finished inline edit. */}
-        {docked && briefOpen && (
+        {!simple && docked && briefOpen && (
           <>
             <SplitHandle
               {...briefSplit.handleProps}
@@ -742,16 +776,20 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
         )}
 
         {/* ---- brief, floating ---------------------------------------------- */}
-        {briefDock === 'float' && (
+        {!simple && briefDock === 'float' && (
           <FloatingBrief onDock={(side) => dockTo(side)} onClose={() => dockTo('right')}>
             {brief}
           </FloatingBrief>
         )}
 
         {/* Mobile gets the brief as a full surface, not a cramped sheet. */}
-        <div className={cn('min-h-0 flex-1 md:hidden', mobileView === 'brief' ? 'flex' : 'hidden')}>
-          {brief}
-        </div>
+        {!simple && (
+          <div
+            className={cn('min-h-0 flex-1 md:hidden', mobileView === 'brief' ? 'flex' : 'hidden')}
+          >
+            {brief}
+          </div>
+        )}
       </div>
 
       {generating && <GeneratingToast count={Object.keys(live).length} />}
@@ -766,11 +804,13 @@ export function Workspace({ runId, initialState, initialMessages }: WorkspacePro
         onDismiss={() => void submitScope(null, [])}
       />
 
-      <CommandPalette
-        open={palette.open}
-        onOpenChange={palette.setOpen}
-        commands={commands}
-      />
+      {!simple && (
+        <CommandPalette
+          open={palette.open}
+          onOpenChange={palette.setOpen}
+          commands={commands}
+        />
+      )}
     </div>
   );
 }
@@ -789,6 +829,8 @@ function TopBar({
   hasResults,
   mobileView,
   onMobileView,
+  simple,
+  userName,
 }: {
   state: RunState;
   generating: boolean;
@@ -799,6 +841,8 @@ function TopBar({
   hasResults: boolean;
   mobileView: 'chat' | 'results' | 'brief';
   onMobileView: (view: 'chat' | 'results' | 'brief') => void;
+  simple?: boolean;
+  userName?: string;
 }) {
   const titled = state.title !== 'Untitled ICP';
 
@@ -832,16 +876,24 @@ function TopBar({
             className="mr-1 lg:hidden"
             value={mobileView}
             onChange={onMobileView}
-            options={[
-              { value: 'chat', label: 'Chat' },
-              { value: 'results', label: 'Profiles' },
-              { value: 'brief', label: 'Brief' },
-            ]}
+            options={
+              simple
+                ? [
+                    { value: 'chat', label: 'Chat' },
+                    { value: 'results', label: 'Profiles' },
+                  ]
+                : [
+                    { value: 'chat', label: 'Chat' },
+                    { value: 'results', label: 'Profiles' },
+                    { value: 'brief', label: 'Brief' },
+                  ]
+            }
           />
         )}
 
         {/* Discoverability for the palette. A bare ⌘K shortcut nobody is told
             about is a shortcut nobody uses, so it gets a real target. */}
+        {!simple && (
         <button
           type="button"
           onClick={onOpenPalette}
@@ -856,6 +908,7 @@ function TopBar({
           <span className="text-sm">Commands</span>
           <Kbd className="transition-colors duration-fast group-hover:border-line-strong">⌘K</Kbd>
         </button>
+        )}
 
         <Hint label="Saved ICPs">
           <Button variant="ghost" size="icon-sm" asChild>
@@ -865,13 +918,15 @@ function TopBar({
           </Button>
         </Hint>
 
-        <Hint label="Usage and history">
-          <Button variant="ghost" size="icon-sm" asChild>
-            <Link href="/admin" aria-label="Admin">
-              <Gauge />
-            </Link>
-          </Button>
-        </Hint>
+        {!simple && (
+          <Hint label="Usage and history">
+            <Button variant="ghost" size="icon-sm" asChild>
+              <Link href="/admin" aria-label="Admin">
+                <Gauge />
+              </Link>
+            </Button>
+          </Hint>
+        )}
 
         <Hint label="Start a new ICP">
           <Button variant="ghost" size="icon-sm" onClick={onNew} aria-label="New ICP">
@@ -881,17 +936,21 @@ function TopBar({
 
         <ThemeToggle />
 
-        <Hint label={briefOpen ? 'Hide the brief' : 'Show the brief'}>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="hidden md:inline-flex"
-            onClick={onToggleBrief}
-            aria-label={briefOpen ? 'Hide the brief' : 'Show the brief'}
-          >
-            {briefOpen ? <PanelRightClose /> : <PanelRightOpen />}
-          </Button>
-        </Hint>
+        {!simple && (
+          <Hint label={briefOpen ? 'Hide the brief' : 'Show the brief'}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="hidden md:inline-flex"
+              onClick={onToggleBrief}
+              aria-label={briefOpen ? 'Hide the brief' : 'Show the brief'}
+            >
+              {briefOpen ? <PanelRightClose /> : <PanelRightOpen />}
+            </Button>
+          </Hint>
+        )}
+
+        <SignOut userName={userName} />
       </div>
     </header>
   );
