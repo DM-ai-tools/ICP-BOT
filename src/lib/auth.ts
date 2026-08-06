@@ -51,6 +51,30 @@ const KEY_LENGTH = 64;
  * AUTH_SECRET explicitly is still correct — the fallback changes if the
  * database URL ever does, which signs everyone out.
  */
+/**
+ * The off switch.
+ *
+ * Set AUTH_DISABLED=true and the app behaves exactly as it did before accounts
+ * existed: no login screen, everyone gets the full workspace. Nothing is
+ * deleted — the accounts, the hashes and the guards all stay where they are, so
+ * turning it back on is one variable and a redeploy rather than a rebuild.
+ *
+ * Every guard in this file honours it, so there is one place to reason about
+ * rather than a scattering of half-disabled checks.
+ */
+export function authDisabled(): boolean {
+  const value = process.env.AUTH_DISABLED?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+/** Who everyone is while auth is switched off: an administrator. */
+const OPEN_ACCESS_USER: CurrentUser = {
+  id: 'open-access',
+  username: 'open-access',
+  displayName: '',
+  role: 'admin',
+};
+
 export function authSecret(): string {
   const explicit = process.env.AUTH_SECRET?.trim();
   if (explicit && explicit.length >= 16) return explicit;
@@ -176,6 +200,8 @@ export interface CurrentUser {
  * the end of a fourteen-day window.
  */
 export async function currentUser(): Promise<CurrentUser | null> {
+  if (authDisabled()) return OPEN_ACCESS_USER;
+
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   const payload = await verifySession(token, authSecret());
@@ -225,6 +251,8 @@ export async function requireAdmin(): Promise<CurrentUser> {
 export async function guard(
   options: { admin?: boolean } = {},
 ): Promise<{ user: CurrentUser; response: null } | { user: null; response: Response }> {
+  if (authDisabled()) return { user: OPEN_ACCESS_USER, response: null };
+
   const user = await currentUser();
 
   if (!user) {

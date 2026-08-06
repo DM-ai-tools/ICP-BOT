@@ -64,6 +64,8 @@ interface WorkspaceProps {
    */
   role?: 'admin' | 'user';
   userName?: string;
+  /** False while accounts are switched off. */
+  showSignOut?: boolean;
   initialMessages: ThreadMessage[];
 }
 
@@ -73,6 +75,7 @@ export function Workspace({
   initialMessages,
   role = 'admin',
   userName,
+  showSignOut = true,
 }: WorkspaceProps) {
   const simple = role !== 'admin';
   const router = useRouter();
@@ -680,6 +683,7 @@ export function Workspace({
         onMobileView={setMobileView}
         simple={simple}
         userName={userName}
+        showSignOut={showSignOut}
       />
 
       <div className="relative flex min-h-0 flex-1">
@@ -831,6 +835,7 @@ function TopBar({
   onMobileView,
   simple,
   userName,
+  showSignOut,
 }: {
   state: RunState;
   generating: boolean;
@@ -843,6 +848,7 @@ function TopBar({
   onMobileView: (view: 'chat' | 'results' | 'brief') => void;
   simple?: boolean;
   userName?: string;
+  showSignOut?: boolean;
 }) {
   const titled = state.title !== 'Untitled ICP';
 
@@ -950,7 +956,7 @@ function TopBar({
           </Hint>
         )}
 
-        <SignOut userName={userName} />
+        {showSignOut && <SignOut userName={userName} />}
       </div>
     </header>
   );

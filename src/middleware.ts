@@ -17,8 +17,17 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { SESSION_COOKIE, isPublicPath } from '@/lib/auth-shared';
 
+/** Mirrors authDisabled() in lib/auth — kept inline so the Edge bundle stays thin. */
+function authOff(): boolean {
+  const value = process.env.AUTH_DISABLED?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Switched off: behave exactly as the app did before accounts existed.
+  if (authOff()) return NextResponse.next();
 
   if (isPublicPath(pathname)) return NextResponse.next();
 

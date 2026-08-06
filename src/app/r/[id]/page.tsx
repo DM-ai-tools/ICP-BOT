@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { Workspace } from '@/components/workspace';
 import { loadRun, serialiseRun } from '@/lib/run-service';
-import { currentUser } from '@/lib/auth';
+import { authDisabled, currentUser } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +16,8 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
     <Workspace
       runId={run.id}
       role={user?.role ?? 'user'}
-      userName={user?.displayName}
+      userName={authDisabled() ? undefined : user?.displayName}
+      showSignOut={!authDisabled()}
       initialState={serialiseRun(run)}
       initialMessages={run.messages
         .filter((m) => m.role === 'user' || m.role === 'assistant')
