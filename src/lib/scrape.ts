@@ -122,7 +122,21 @@ export interface FetchedPage {
  */
 export async function fetchPage(
   rawUrl: string,
-  opts: { timeoutMs?: number; accept?: string } = {},
+  opts: {
+    timeoutMs?: number;
+    accept?: string;
+    /**
+     * Whether a failed read may be rescued through Firecrawl.
+     *
+     * Off for the sixteen supporting page reads. When a site blocks us, every
+     * one of those falls through to Firecrawl at once, exhausts the rate limit
+     * in a single run, and leaves the NEXT run with nothing — which is exactly
+     * what happened: one production run returned twenty-one offers and the run
+     * a minute later returned zero. Only the homepage and the sitemap are worth
+     * a credit, because without them there is no catalogue at all.
+     */
+    allowFirecrawl?: boolean;
+  } = {},
 ): Promise<FetchedPage> {
   let url: URL;
   try {
@@ -171,7 +185,7 @@ export async function fetchPage(
       if (![403, 406, 418, 429].includes(response.status)) break;
     }
 
-    const wantsHtml = !/xml|text\/plain/i.test(opts.accept ?? '');
+    const wantsHtml = !/xml|text\/plain/i.test(opts.accept ?? '') && opts.allowFirecrawl !== false;
 
     if (!response || !response.ok) {
       // Blocked outright. Firecrawl runs a real browser from its own network
@@ -214,7 +228,7 @@ export async function fetchPage(
     return { ok: true, url: response.url || url.toString(), html };
   } catch (err) {
     const message = (err as Error)?.name === 'AbortError' ? 'timed out' : 'could not be reached';
-    if (!/xml|text\/plain/i.test(opts.accept ?? '')) {
+    if (!/xml|text\/plain/i.test(opts.accept ?? '') && opts.allowFirecrawl !== false) {
       const rescued = await firecrawlFetch(url.toString(), opts.timeoutMs ?? env.scrapeTimeoutMs);
       if (rescued.ok) return rescued;
     }

@@ -391,7 +391,13 @@ async function readPages(candidates: Candidate[]): Promise<ReadPage[]> {
     for (;;) {
       const next = queue.shift();
       if (!next) return;
-      const page = await fetchPage(next.url, { timeoutMs: PAGE_TIMEOUT_MS });
+      // No Firecrawl rescue here — see the note on fetchPage's allowFirecrawl.
+      // Sixteen of these falling through at once burns the rate limit and
+      // starves the next run of the two reads that actually matter.
+      const page = await fetchPage(next.url, {
+        timeoutMs: PAGE_TIMEOUT_MS,
+        allowFirecrawl: false,
+      });
       if (!page.ok || !page.html) continue;
       const summary = pageSummary(page.html);
       // A page with no headline material tells us nothing worth a prompt slot.
