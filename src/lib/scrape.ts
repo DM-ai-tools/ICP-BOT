@@ -45,6 +45,67 @@ const HONEST_AGENT = 'ICPBuilder/1.0 (+https://github.com/DM-ai-tools/ICP-BOT)';
 const BROWSER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+/**
+ * A page with almost no links is not a page we can use.
+ *
+ * argfinance.com.au answers Railway with HTTP 200 and a challenge shell: real
+ * bytes, no readable text, no anchors. Treating that as a successful fetch is
+ * how discovery concluded a mortgage broker with nineteen loan products sells
+ * one thing. Five is deliberately low — a genuine one-page site still has a
+ * nav, a phone link and a footer.
+ */
+function looksLikeAChallenge(html: string): boolean {
+  return (html.match(/<a\b/gi) ?? []).length < 5;
+}
+
+/**
+ * Read the page through Firecrawl instead.
+ *
+ * Used only when a direct read fails or comes back as a challenge shell.
+ * Firecrawl runs a real browser from its own infrastructure, so it gets the
+ * page that a person would see — verified against argfinance.com.au, which
+ * returns 771KB and 230 links to Firecrawl and an empty shell to us.
+ *
+ * Deliberately a fallback rather than the default: it costs credits per page,
+ * and most sites answer a plain fetch perfectly well.
+ */
+async function firecrawlFetch(url: string, timeoutMs: number): Promise<FetchedPage> {
+  const key = process.env.FIRECRAWL_API_KEY?.trim();
+  if (!key) return { ok: false, url, html: null, reason: 'no Firecrawl key configured' };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch('https://api.firecrawl.dev/v2/scrape', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, formats: ['rawHtml'], onlyMainContent: false }),
+    });
+
+    if (!response.ok) {
+      return { ok: false, url, html: null, reason: `Firecrawl returned ${response.status}` };
+    }
+
+    const payload = (await response.json()) as {
+      success?: boolean;
+      data?: { rawHtml?: string; html?: string };
+    };
+    const html = payload.data?.rawHtml ?? payload.data?.html ?? null;
+
+    if (!payload.success || !html) {
+      return { ok: false, url, html: null, reason: 'Firecrawl returned no HTML' };
+    }
+    return { ok: true, url, html: html.slice(0, MAX_BYTES) };
+  } catch (err) {
+    const message = (err as Error)?.name === 'AbortError' ? 'Firecrawl timed out' : 'Firecrawl unreachable';
+    return { ok: false, url, html: null, reason: message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface FetchedPage {
   ok: boolean;
   url: string;
@@ -110,7 +171,15 @@ export async function fetchPage(
       if (![403, 406, 418, 429].includes(response.status)) break;
     }
 
+    const wantsHtml = !/xml|text\/plain/i.test(opts.accept ?? '');
+
     if (!response || !response.ok) {
+      // Blocked outright. Firecrawl runs a real browser from its own network
+      // and routinely gets pages that a datacenter fetch cannot.
+      if (wantsHtml) {
+        const rescued = await firecrawlFetch(url.toString(), opts.timeoutMs ?? env.scrapeTimeoutMs);
+        if (rescued.ok) return rescued;
+      }
       return {
         ok: false,
         url: url.toString(),
@@ -132,9 +201,23 @@ export async function fetchPage(
 
     const buffer = await response.arrayBuffer();
     const html = new TextDecoder('utf-8').decode(buffer.slice(0, MAX_BYTES));
+
+    // A 200 is not the same as a page. The harder case than an outright block
+    // is the one that answers politely with nothing in it.
+    if (wantsHtml && looksLikeAChallenge(html)) {
+      const rescued = await firecrawlFetch(url.toString(), opts.timeoutMs ?? env.scrapeTimeoutMs);
+      if (rescued.ok && rescued.html && !looksLikeAChallenge(rescued.html)) {
+        return rescued;
+      }
+    }
+
     return { ok: true, url: response.url || url.toString(), html };
   } catch (err) {
     const message = (err as Error)?.name === 'AbortError' ? 'timed out' : 'could not be reached';
+    if (!/xml|text\/plain/i.test(opts.accept ?? '')) {
+      const rescued = await firecrawlFetch(url.toString(), opts.timeoutMs ?? env.scrapeTimeoutMs);
+      if (rescued.ok) return rescued;
+    }
     return { ok: false, url: url.toString(), html: null, reason: message };
   } finally {
     clearTimeout(timer);
